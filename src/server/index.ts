@@ -17,6 +17,16 @@ const BOT_FILL = clampInt(process.env.BOT_FILL, MATCH.BOT_FILL, 0, 12);
 const JOIN_TIMEOUT_MS = 8000;
 const MAX_BUFFERED_BYTES = 512 * 1024;
 
+/** Entries may contain `*` wildcards, e.g. `https://shotdis-*.vercel.app`. Localhost is always allowed. */
+const ORIGIN_PATTERNS = ALLOWED_ORIGINS.map((o) => new RegExp('^' + o.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[a-z0-9.-]*') + '$', 'i'));
+
+function originAllowed(origin: string | undefined): boolean {
+  if (ALLOWED_ORIGINS.length === 0) return true;
+  if (!origin) return false;
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
+  return ORIGIN_PATTERNS.some((re) => re.test(origin));
+}
+
 function clampInt(v: string | undefined, def: number, lo: number, hi: number): number {
   const n = Number(v);
   if (!Number.isFinite(n)) return def;
@@ -42,10 +52,7 @@ const wss = new WebSocketServer({
   maxPayload: NET.MAX_MESSAGE_BYTES,
   perMessageDeflate: false,
   verifyClient: ({ origin }, done) => {
-    if (ALLOWED_ORIGINS.length === 0) return done(true);
-    if (origin && ALLOWED_ORIGINS.includes(origin)) return done(true);
-    // Allow same-host and localhost during development.
-    if (origin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return done(true);
+    if (originAllowed(origin)) return done(true);
     done(false, 403, 'Origin not allowed');
   },
 });

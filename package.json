@@ -21,7 +21,11 @@
     "lint": "eslint src",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "deploy:server": "scripts/deploy-server.sh",
+    "deploy:web": "scripts/deploy-web.sh",
+    "docker:build": "docker build -t shotdis-server .",
+    "docker:run": "docker run --rm -p 8787:8787 -e ALLOWED_ORIGINS= shotdis-server"
   },
   "dependencies": {
     "react": "^18.3.1",
