@@ -19,7 +19,7 @@ gcloud run deploy "$SERVICE" \
   --cpu 1 \
   --memory 512Mi \
   --timeout 3600 \
-  --set-env-vars "^|^ROOM_SIZE=8|BOT_FILL=4|ALLOWED_ORIGINS=${ORIGINS}" \
+  --set-env-vars "^|^ROOM_SIZE=8|BOT_FILL=4|TRUST_PROXY=1|ALLOWED_ORIGINS=${ORIGINS}" \
   --quiet
 
 gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" --format='value(status.url)'

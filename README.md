@@ -54,7 +54,9 @@ src/
 - Clock sync from ping/pong samples (median of the lowest-RTT samples).
 - Weapon timing runs on a per-player simulation clock advanced by input dt, so client and server reach identical reload/fire-rate results.
 
-**Anti-cheat basics** (all server-side): input dt bounds, a real-time budget so clients cannot simulate faster than wall-clock, fire rate / ammo / reload enforced by the shared weapon state machine, damage only from server raycasts, message validation and rate limiting, nickname sanitisation, origin allow-list.
+**Anti-cheat basics** (all server-side): input dt bounds, a real-time budget so clients cannot simulate faster than wall-clock, a hard horizontal speed cap in the shared movement code, fire rate / ammo / reload enforced by the shared weapon state machine, damage only from server raycasts, message validation and rate limiting, nickname sanitisation, origin allow-list, connection / room / per-IP caps.
+
+**Reconnects:** the welcome message carries a rejoin token. If the socket drops, the client reconnects automatically (up to four attempts) and reclaims the same player, score and position; the server keeps the slot for 20 s and terminates the stale socket, so no ghost bodies are left behind.
 
 **Rendering:** each arena is authored as boxes and ramps and merged into one mesh per material (≈20 draw calls per map). Procedural noise textures, a gradient sky dome, GPU point sparks, pooled tracers/casings, one shadow-casting sun. Quality presets scale shadows, antialiasing, particles and resolution.
 
@@ -81,6 +83,8 @@ See `.env.example`.
 | `PORT` | server | Listen port (Cloud Run injects it). |
 | `ALLOWED_ORIGINS` | server | Comma-separated browser origins allowed to connect; `*` wildcards supported. Empty = any (dev). |
 | `ROOM_SIZE` / `BOT_FILL` | server | Players per room / bots that fill empty slots. |
+| `TRUST_PROXY` | server | `1` behind a reverse proxy (Cloud Run) so per-IP limits use `X-Forwarded-For`. |
+| `MAX_SESSIONS` / `MAX_ROOMS` / `MAX_PER_IP` | server | Abuse caps (defaults 400 / 48 / 6). |
 
 ## Local development
 
