@@ -4,7 +4,6 @@ import { MAPS } from '@shared/maps';
 import { useStore } from '@client/app/store';
 import { SERVER_URL } from '@client/app/serverStatus';
 import { Button, Segmented, uiClick, uiHover } from '../common/Controls';
-import { MenuBackground } from './MenuBackground';
 
 function statPct(w: WeaponId, key: 'damage' | 'rate' | 'range' | 'mobility'): number {
   const d = WEAPONS[w];
@@ -37,7 +36,6 @@ export function PlayScreen({ onStart }: { onStart: (mode: 'online' | 'practice')
 
   return (
     <>
-      <MenuBackground />
       <div className="overlay" style={{ background: 'rgba(5,6,10,0.6)' }}>
         <div className="modal">
           <div className="modal-head">

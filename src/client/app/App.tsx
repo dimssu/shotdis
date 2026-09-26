@@ -7,6 +7,7 @@ import { HUD } from '@client/ui/hud/HUD';
 import { PauseMenu } from '@client/ui/hud/PauseMenu';
 import { ConnectingScreen, LoadingScreen } from '@client/ui/loading/LoadingScreen';
 import { MainMenu } from '@client/ui/menu/MainMenu';
+import { MenuBackground } from '@client/ui/menu/MenuBackground';
 import { PlayScreen } from '@client/ui/menu/PlayScreen';
 import { ResultsScreen } from '@client/ui/results/ResultsScreen';
 import { Scoreboard } from '@client/ui/scoreboard/Scoreboard';
@@ -17,6 +18,8 @@ import { SERVER_URL } from './serverStatus';
 import { useStore, type GameMode } from './store';
 
 let pendingTransport: Transport | null = null;
+let connectAttempt = 0;
+let activeConnect: WsTransport | null = null;
 
 /** `?map=neon` picks the practice map during development. */
 function devMapIndex(): number | null {
@@ -35,6 +38,7 @@ function GameView({ onLeave }: { onLeave: (reason?: string) => void }) {
   const results = useStore((s) => s.results);
   const scoreboardOpen = useStore((s) => s.scoreboardOpen);
   const overlay = useStore((s) => s.overlay);
+  const reconnecting = useStore((s) => s.reconnecting);
   const settings = useStore((s) => s.settings);
   const [failed, setFailed] = useState<string | null>(null);
 
@@ -112,7 +116,7 @@ function GameView({ onLeave }: { onLeave: (reason?: string) => void }) {
               onLeave={() => onLeave()}
             />
           )}
-          {paused && !results && overlay === 'none' && (
+          {paused && !results && !reconnecting && overlay === 'none' && (
             <PauseMenu
               onResume={() => {
                 useStore.setState({ paused: false });
@@ -165,17 +169,23 @@ export function App() {
     if (mode === 'online') {
       st.setScreen('connecting');
       useStore.setState({ connectStatus: 'Reaching the game server', connectError: null });
+      const attempt = ++connectAttempt;
+      activeConnect?.close();
       const ws = new WsTransport();
+      activeConnect = ws;
       try {
         await ws.connect(SERVER_URL);
       } catch (e) {
-        useStore.setState({ connectError: e instanceof Error ? e.message : 'Could not connect' });
+        if (attempt === connectAttempt && useStore.getState().screen === 'connecting') {
+          useStore.setState({ connectError: e instanceof Error ? e.message : 'Could not connect' });
+        }
         return;
       }
-      if (useStore.getState().screen !== 'connecting') {
+      if (attempt !== connectAttempt || useStore.getState().screen !== 'connecting') {
         ws.close();
         return;
       }
+      activeConnect = null;
       pendingTransport = ws;
     } else {
       const s = st.settings;
@@ -193,11 +203,17 @@ export function App() {
 
   return (
     <>
+      {(screen === 'menu' || screen === 'play') && <MenuBackground />}
       {screen === 'menu' && <MainMenu />}
       {screen === 'play' && <PlayScreen onStart={(m) => void startMatch(m)} />}
       {screen === 'connecting' && (
         <ConnectingScreen
-          onCancel={() => useStore.getState().setScreen('play')}
+          onCancel={() => {
+            connectAttempt++;
+            activeConnect?.close();
+            activeConnect = null;
+            useStore.getState().setScreen('play');
+          }}
           onOffline={() => void startMatch('practice')}
         />
       )}

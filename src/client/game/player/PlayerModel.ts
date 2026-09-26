@@ -10,6 +10,7 @@ const limbGeo = new THREE.BoxGeometry(0.16, 0.7, 0.16);
 const armGeo = new THREE.BoxGeometry(0.13, 0.6, 0.13);
 const gunGeo = new THREE.BoxGeometry(0.09, 0.12, 0.7);
 const shoulderGeo = new THREE.BoxGeometry(0.62, 0.12, 0.34);
+const chestGeo = new THREE.BoxGeometry(0.3, 0.22, 0.05);
 const darkMat = new THREE.MeshStandardMaterial({ color: 0x1d2129, roughness: 0.7, metalness: 0.2 });
 const limbMat = new THREE.MeshStandardMaterial({ color: 0x2b303b, roughness: 0.8, metalness: 0.1 });
 const gunMat = new THREE.MeshStandardMaterial({ color: 0x3a3f4a, roughness: 0.5, metalness: 0.6 });
@@ -43,7 +44,7 @@ export class PlayerModel {
     const g = this.group;
     this.torso = new THREE.Mesh(bodyGeo, darkMat);
     this.torso.position.y = 1.08;
-    const chest = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.22, 0.05), this.accentMat);
+    const chest = new THREE.Mesh(chestGeo, this.accentMat);
     chest.position.set(0, 0.1, 0.17);
     this.torso.add(chest);
     const shoulders = new THREE.Mesh(shoulderGeo, this.accentMat);
@@ -66,12 +67,19 @@ export class PlayerModel {
     this.armR.rotation.x = -1.2;
     this.gun = new THREE.Mesh(gunGeo, gunMat);
     this.gun.position.set(0.18, 1.25, 0.45);
-    for (const m of [this.torso, this.head, this.legL, this.legR, this.armL, this.armR, this.gun, chest, shoulders]) {
+    this.parts = [this.torso, this.head, this.legL, this.legR, this.armL, this.armR, this.gun, chest, shoulders];
+    this.setShadows(shadows);
+    g.add(this.torso, this.head, this.legL, this.legR, this.armL, this.armR, this.gun);
+    this.setName(name);
+  }
+
+  private parts: THREE.Mesh[] = [];
+
+  setShadows(shadows: boolean): void {
+    for (const m of this.parts) {
       m.castShadow = shadows;
       m.receiveShadow = false;
     }
-    g.add(this.torso, this.head, this.legL, this.legR, this.armL, this.armR, this.gun);
-    this.setName(name);
   }
 
   setName(name: string): void {

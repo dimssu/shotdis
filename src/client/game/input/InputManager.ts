@@ -166,6 +166,7 @@ export class InputManager {
 
   private onKeyDown = (e: KeyboardEvent): void => {
     if (e.code === 'Tab') {
+      if (!this.locked) return; // menus stay keyboard-navigable
       e.preventDefault();
       if (!this.scoreboardHeld) {
         this.scoreboardHeld = true;
@@ -191,9 +192,11 @@ export class InputManager {
 
   private onKeyUp = (e: KeyboardEvent): void => {
     if (e.code === 'Tab') {
-      e.preventDefault();
-      this.scoreboardHeld = false;
-      this.onScoreboard?.(false);
+      if (this.scoreboardHeld) {
+        e.preventDefault();
+        this.scoreboardHeld = false;
+        this.onScoreboard?.(false);
+      }
       return;
     }
     const bit = KEY_BITS[e.code];

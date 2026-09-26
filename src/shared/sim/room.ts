@@ -145,6 +145,7 @@ export class GameRoom implements BotWorldView {
   }
 
   addHuman(name: string, weapon: WeaponId): SimPlayer {
+    if (WEAPONS[weapon].slot !== 'primary') weapon = 'rifle';
     // Replace a bot if the room is full of bots.
     if (this.players.size >= this.roomSize) {
       for (const p of this.players.values()) {
@@ -173,7 +174,7 @@ export class GameRoom implements BotWorldView {
    * Send the welcome message to a player. Called by the host once the player's
    * connection is registered with the transport (so the message can be routed).
    */
-  welcome(id: number): void {
+  welcome(id: number, token = ''): void {
     const p = this.players.get(id);
     if (!p || p.bot) return;
     this.transport.send(id, {
@@ -184,8 +185,31 @@ export class GameRoom implements BotWorldView {
       players: [...this.players.values()].map((q) => q.info()),
       you: p.youTuple(this.now, false),
       room: this.id,
+      token,
     });
     this.transport.send(id, { t: 'scores', p: this.sortedInfo() });
+  }
+
+  /**
+   * A player reconnected on a new socket: forget the old input stream so the
+   * client can restart its sequence numbers, and keep everything else (score,
+   * position, loadout) as it was.
+   */
+  rejoin(id: number): boolean {
+    const p = this.players.get(id);
+    if (!p || p.bot) return false;
+    p.lastSeq = -1;
+    p.inputQueue.length = 0;
+    p.timeBudget = 0.1;
+    p.lastInputWall = this.now;
+    p.connected = true;
+    return true;
+  }
+
+  /** Mark a player as disconnected (the socket dropped); they are removed by the host when it gives up on them. */
+  markDisconnected(id: number): void {
+    const p = this.players.get(id);
+    if (p) p.connected = false;
   }
 
   addBot(difficulty?: BotDifficulty): SimPlayer {
@@ -255,7 +279,6 @@ export class GameRoom implements BotWorldView {
     if (!p || p.bot) return;
     switch (msg.t) {
       case 'in': {
-        p.renderTime = msg.rt;
         for (const f of msg.f) {
           if (f[0] <= p.lastSeq) continue;
           if (p.inputQueue.length >= 64) p.inputQueue.shift();
@@ -286,6 +309,8 @@ export class GameRoom implements BotWorldView {
     const dt = Math.min(0.1, Math.max(0, (now - this.now) / 1000));
     this.now = now;
     this.updatePhase();
+    // Phase/map changes must reach clients before the snapshot that follows them.
+    this.flushEvents();
 
     for (const p of this.players.values()) {
       if (p.bot) this.updateBot(p, dt);
@@ -382,22 +407,24 @@ export class GameRoom implements BotWorldView {
   private updateBot(p: SimPlayer, dt: number): void {
     const brain = this.brains.get(p.id);
     if (!brain) return;
-    // Bots simulate at the fixed sim rate to stay consistent with humans.
-    let steps = Math.round(dt / SIM.DT);
-    if (steps < 1) steps = 1;
-    if (steps > 4) steps = 4;
-    for (let i = 0; i < steps; i++) {
+    // Bots simulate at the fixed sim rate regardless of how often the host ticks.
+    p.botAccum += dt;
+    let steps = 0;
+    while (p.botAccum >= SIM.DT && steps < 4) {
+      p.botAccum -= SIM.DT;
       brain.think(this, SIM.DT, this.botInput);
-      p.renderTime = this.now;
-      this.applyInput(p, [p.lastSeq + 1, SIM.DT, this.botInput.keys, this.botInput.yaw, this.botInput.pitch]);
+      this.applyInput(p, [p.lastSeq + 1, SIM.DT, this.botInput.keys, this.botInput.yaw, this.botInput.pitch, this.now]);
       p.lastSeq++;
+      steps++;
     }
+    if (p.botAccum > SIM.DT * 4) p.botAccum = 0;
   }
 
   private applyInput(p: SimPlayer, f: InputTuple): void {
-    const [, dt, rawKeys, yaw, pitch] = f;
+    const [, dt, rawKeys, yaw, pitch, rt] = f;
     p.yaw = yaw;
     p.pitch = pitch;
+    p.renderTime = rt;
     const canAct = p.alive && this.phase === 'live';
     const keys = canAct ? rawKeys : 0;
     this.adsHeld.set(p.id, (keys & Keys.ADS) !== 0);
@@ -516,24 +543,29 @@ export class GameRoom implements BotWorldView {
     }
 
     p.shots++;
-    if (hitMap.size > 0) p.hits++;
+    let landed = false;
     for (const [vid, h] of hitMap) {
       const victim = this.players.get(vid);
       if (!victim) continue;
-      const killed = this.damage(victim, p, h.dmg, h.hs, def.id);
+      const outcome = this.damage(victim, p, h.dmg, h.hs, def.id);
+      if (outcome === 'blocked') {
+        // Spawn protection absorbed it: tell the shooter with zero damage so the UI can show a shield.
+        this.sendTo(p.id, { e: 'hit', v: vid, d: 0, hs: h.hs, k: false });
+        continue;
+      }
+      if (outcome === 'ignored') continue;
+      landed = true;
       if (h.hs) p.headshots++;
-      this.sendTo(p.id, { e: 'hit', v: vid, d: Math.round(h.dmg), hs: h.hs, k: killed });
+      this.sendTo(p.id, { e: 'hit', v: vid, d: Math.round(h.dmg), hs: h.hs, k: outcome === 'killed' });
     }
-    this.broadcast(
-      { e: 'shot', id: p.id, w: def.id, o: [round2(ox), round2(oy), round2(oz)], ends: ends.slice(0, 12), hit: hitMap.size > 0 ? 1 : 0 },
-      p.id,
-    );
+    if (landed) p.hits++;
+    this.broadcast({ e: 'shot', id: p.id, w: def.id, o: [round2(ox), round2(oy), round2(oz)], ends: ends.slice(0, 12), hit: landed ? 1 : 0 }, p.id);
   }
 
-  /** Apply damage. Returns true if the victim died. */
-  private damage(victim: SimPlayer, attacker: SimPlayer, dmg: number, hs: boolean, weapon: WeaponId | 'fall'): boolean {
-    if (!victim.alive || this.phase !== 'live') return false;
-    if (victim.protectedUntil > this.now && attacker !== victim) return false;
+  /** Apply damage. */
+  private damage(victim: SimPlayer, attacker: SimPlayer, dmg: number, hs: boolean, weapon: WeaponId | 'fall'): 'ignored' | 'blocked' | 'applied' | 'killed' {
+    if (!victim.alive || this.phase !== 'live') return 'ignored';
+    if (victim.protectedUntil > this.now && attacker !== victim) return 'blocked';
     const r = applyDamage(victim.hp, victim.armor, dmg);
     victim.hp = r.hp;
     victim.armor = r.armor;
@@ -552,9 +584,9 @@ export class GameRoom implements BotWorldView {
     }
     if (victim.hp <= 0) {
       this.kill(victim, attacker === victim ? null : attacker, weapon, hs);
-      return true;
+      return 'killed';
     }
-    return false;
+    return 'applied';
   }
 
   private kill(victim: SimPlayer, killer: SimPlayer | null, weapon: WeaponId | 'fall' | 'void', hs: boolean): void {

@@ -286,6 +286,14 @@ export class BotBrain {
     const dp = desiredPitch - this.pitch;
     this.pitch = clamp(this.pitch + clamp(dp, -maxTurn, maxTurn), -1.4, 1.4);
 
+    // ---- Weapon management: fall back to the sidearm when the primary is dry, return when it is not ----
+    const other = p.weapon.ammo[1 - p.weapon.slot];
+    if (ammo.mag === 0 && ammo.reserve === 0 && other.mag + other.reserve > 0) {
+      keys |= p.weapon.slot === 0 ? Keys.SLOT2 : Keys.SLOT1;
+    } else if (p.weapon.slot === 1 && p.weapon.ammo[0].mag + p.weapon.ammo[0].reserve > 0 && !target) {
+      keys |= Keys.SLOT1;
+    }
+
     // ---- Trigger discipline ----
     if (wantFire) {
       if (ammo.mag === 0) keys |= Keys.RELOAD;

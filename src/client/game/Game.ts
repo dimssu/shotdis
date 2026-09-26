@@ -92,6 +92,10 @@ export class Game {
   private disposed = false;
   private lowHealthPulse = 0;
   private mouse = { dx: 0, dy: 0 };
+  private rejoinToken = '';
+  private joinSentAt = 0;
+  private lastYou: number[] | null = null;
+  private rebuildTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(opts: GameOptions) {
     this.opts = opts;
@@ -116,7 +120,8 @@ export class Game {
     this.local = new LocalPlayer(this.world);
     this.input = new InputManager(opts.canvas);
     this.input.onLockChange = (locked) => {
-      useStore.setState({ pointerLocked: locked, paused: !locked && useStore.getState().screen === 'game' && !useStore.getState().results });
+      const st = useStore.getState();
+      useStore.setState({ pointerLocked: locked, paused: !locked && st.screen === 'game' && !st.results && !st.reconnecting });
       if (locked) useStore.setState({ overlay: 'none' });
     };
     this.input.onScoreboard = (open) => useStore.setState({ scoreboardOpen: open });
@@ -151,6 +156,7 @@ export class Game {
     audio.setVolumes(s.masterVolume, s.musicVolume, s.sfxVolume, s.muted);
     p('Joining match', 0.25);
     this.local.resetForJoin();
+    this.joinSentAt = performance.now();
     this.transport.send({ t: 'join', name: this.opts.name, weapon: this.opts.weapon, v: PROTOCOL_VERSION });
     await this.waitForWelcome();
     p(`Building ${this.map.name.toLowerCase()}`, 0.55);
@@ -231,7 +237,8 @@ export class Game {
       for (const id of [...this.players.keys()]) this.removePlayer(id);
       this.myInfo = null;
       this.inputBatch = [];
-      ws.send({ t: 'join', name: this.opts.name, weapon: useStore.getState().settings.weapon, v: PROTOCOL_VERSION });
+      this.joinSentAt = performance.now();
+      ws.send({ t: 'join', name: this.opts.name, weapon: useStore.getState().settings.weapon, v: PROTOCOL_VERSION, token: this.rejoinToken || undefined });
       try {
         await this.waitForWelcome();
         this.reconnecting = false;
@@ -269,7 +276,9 @@ export class Game {
     this.casings.dispose();
     this.viewModel.dispose();
     audio.stopAmbient();
+    if (this.rebuildTimer) clearTimeout(this.rebuildTimer);
     this.renderer.dispose();
+    this.renderer.forceContextLoss();
   }
 
   requestPointerLock(): void {
@@ -307,9 +316,16 @@ export class Game {
 
   private onSettingsChanged(next: Settings, prev: Settings): void {
     this.settings = next;
-    if (next.quality !== prev.quality || next.shadows !== prev.shadows || next.resolutionScale !== prev.resolutionScale || next.effects !== prev.effects) {
-      this.applyQuality();
-      this.loadMapVisuals(this.map);
+    if (next.resolutionScale !== prev.resolutionScale) this.applyQuality();
+    if (next.quality !== prev.quality || next.shadows !== prev.shadows || next.effects !== prev.effects) {
+      // Sliders and toggles can fire rapidly; rebuild the arena once things settle.
+      if (this.rebuildTimer) clearTimeout(this.rebuildTimer);
+      this.rebuildTimer = setTimeout(() => {
+        this.rebuildTimer = null;
+        if (this.disposed) return;
+        this.applyQuality();
+        this.loadMapVisuals(this.map);
+      }, 250);
     }
     if (next.fov !== prev.fov) this.rig.hFov = next.fov;
     if (next.masterVolume !== prev.masterVolume || next.musicVolume !== prev.musicVolume || next.sfxVolume !== prev.sfxVolume || next.muted !== prev.muted) {
@@ -349,15 +365,9 @@ export class Game {
       this.particles = new AmbientParticles(map, map.particles, s.quality === 'high' ? 600 : 300);
       this.scene.add(this.particles.points);
     } else this.particles = null;
-    for (const r of this.remotes.values()) {
-      this.scene.remove(r.model.group);
-      r.dispose();
-    }
-    for (const r of this.remotes.values()) {
-      const nr = new RemotePlayer(r.info, shadows);
-      this.remotes.set(r.info.id, nr);
-      this.scene.add(nr.model.group);
-    }
+    for (const r of this.remotes.values()) r.model.setShadows(shadows);
+    // Pending inputs may have been replayed against the old collision world; redo it against the new one.
+    if (this.lastYou) this.local.reconcile(this.lastYou, this.local.lastAck);
     useStore.getState().setHud({ mapName: map.name });
   }
 
@@ -391,11 +401,14 @@ export class Game {
 
   private onWelcome(m: Extract<ServerMsg, { t: 'welcome' }>): void {
     this.local.id = m.id;
-    this.clock.seed(m.st, performance.now());
+    this.rejoinToken = m.token ?? '';
+    const now = performance.now();
+    this.clock.seed(m.st, now, this.joinSentAt > 0 ? Math.max(0, now - this.joinSentAt) : 0);
     this.match = m.match;
     this.wasLive = m.match.phase === 'live';
     useStore.setState({ myId: m.id });
     for (const p of m.players) this.addPlayer(p);
+    this.lastYou = m.you;
     this.local.reconcile(m.you, -1);
     const map = getMap(m.match.map);
     if (this.running && map !== this.map) this.loadMapVisuals(map);
@@ -408,6 +421,7 @@ export class Game {
   private onSnapshot(m: Extract<ServerMsg, { t: 'snap' }>): void {
     if (m.you) {
       const wasAlive = this.local.alive;
+      this.lastYou = m.you;
       this.local.reconcile(m.you, m.ack);
       if (wasAlive !== this.local.alive) this.onAliveChanged(this.local.alive);
     }
@@ -453,10 +467,11 @@ export class Game {
   private onTransportClosed(reason: string): void {
     if (this.disposed) return;
     if (this.transport.kind === 'practice') return;
-    if (!this.running) {
-      // Dropped while still loading: give up cleanly.
-      this.welcomeReject?.(new Error(`Disconnected: ${reason}`));
-      return;
+    if (this.welcomeReject) {
+      // A join is in flight (initial load or a reconnect attempt): fail it so the caller moves on immediately.
+      this.welcomeReject(new Error(`Disconnected: ${reason}`));
+      if (!this.running) return;
+      if (this.reconnecting) return;
     }
     if (/out of date|Version|Rate limit|too slow/i.test(reason)) {
       this.opts.onLeave(`Disconnected: ${reason}`);
@@ -508,6 +523,12 @@ export class Game {
         break;
       }
       case 'hit': {
+        if (e.d <= 0) {
+          // Spawn protection absorbed the shot.
+          store.pushHitMarker(false, false, true);
+          audio.play('ricochet', { volume: 0.35, rate: 1.4 });
+          break;
+        }
         store.pushHitMarker(e.hs, e.k);
         audio.play(e.hs ? 'headshot' : 'hit', { volume: e.hs ? 0.8 : 0.6 });
         const r = this.remotes.get(e.v);
@@ -843,7 +864,8 @@ export class Game {
     if (wheel !== 0) keys |= Keys.SWAP;
     if (!this.input.locked) keys = 0;
     const wasOnGround = lp.move.onGround;
-    const input = lp.step(keys, this.rig.yaw, this.rig.pitch, SIM.DT, stepOut);
+    const renderTime = this.clock.serverNow(now) - SIM.INTERP_DELAY_MS;
+    const input = lp.step(keys, this.rig.yaw, this.rig.pitch, SIM.DT, renderTime, stepOut);
     if (lp.alive) {
       if (stepOut.fired) this.onLocalFire();
       if (stepOut.dryFire) audio.play('dry', { volume: 0.5 });
@@ -867,11 +889,10 @@ export class Game {
     }
     this.inputBatch.push(input);
     if (this.inputBatch.length >= SIM.INPUT_BATCH) {
-      const rt = this.clock.serverNow(now) - SIM.INTERP_DELAY_MS;
-      this.transport.send({ t: 'in', rt: Math.max(0, rt), f: this.inputBatch });
+      if (this.welcomed && !this.reconnecting) this.transport.send({ t: 'in', f: this.inputBatch });
       this.inputBatch = [];
     }
-    if (now - this.lastPing > 2000) {
+    if (this.welcomed && !this.reconnecting && now - this.lastPing > 2000) {
       this.lastPing = now;
       this.transport.send({ t: 'ping', c: now, rtt: this.clock.rtt });
     }

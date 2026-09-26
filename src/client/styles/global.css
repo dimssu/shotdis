@@ -903,6 +903,11 @@ kbd {
   width: 12px;
 }
 
+.hitmarker.blocked i {
+  background: #8b93a3;
+  width: 6px;
+}
+
 @keyframes hm {
   0% {
     transform: scale(1.4);

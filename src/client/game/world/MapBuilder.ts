@@ -214,6 +214,9 @@ export function buildMap(map: MapDef, quality: Quality, shadows: boolean): Built
     dispose() {
       for (const m of meshes) m.geometry.dispose();
       for (const m of materials) m.dispose();
+      sun.dispose(); // frees the shadow map render target
+      fill.dispose();
+      for (const pl of pointLights) pl.dispose();
       group.clear();
     },
   };

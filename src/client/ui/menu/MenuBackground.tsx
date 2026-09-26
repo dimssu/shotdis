@@ -10,7 +10,6 @@ import { buildSky } from '@client/game/world/Sky';
 export function MenuBackground() {
   const ref = useRef<HTMLCanvasElement>(null);
   const quality = useStore((s) => s.settings.quality);
-  const reducedMotion = useStore((s) => s.settings.reducedMotion);
 
   useEffect(() => {
     const canvas = ref.current;
@@ -54,7 +53,7 @@ export function MenuBackground() {
       raf = requestAnimationFrame(frame);
       const dt = Math.min(0.1, (now - last) / 1000);
       last = now;
-      if (!reducedMotion) t += dt * 0.06;
+      if (!useStore.getState().settings.reducedMotion) t += dt * 0.06;
       const r = 17;
       camera.position.set(Math.cos(t) * r, 7 + Math.sin(t * 0.7) * 1.5, Math.sin(t) * r);
       camera.lookAt(0, 1.5, 0);
@@ -70,8 +69,9 @@ export function MenuBackground() {
       sky.dispose();
       particles?.dispose();
       renderer.dispose();
+      renderer.forceContextLoss();
     };
-  }, [quality, reducedMotion]);
+  }, [quality]);
 
   return <canvas ref={ref} className="game-canvas" aria-hidden="true" />;
 }

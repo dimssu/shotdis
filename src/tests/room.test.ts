@@ -39,8 +39,8 @@ function advance(room: GameRoom, seconds: number, playerId?: number, keys = 0, y
   const steps = Math.round(seconds / DT);
   for (let i = 0; i < steps; i++) {
     if (playerId !== undefined) {
-      const f: InputTuple = [++seqRef.seq, DT, keys, yaw, pitch];
-      room.handleMessage(playerId, { t: 'in', rt: room.now, f: [f] });
+      const f: InputTuple = [++seqRef.seq, DT, keys, yaw, pitch, room.now];
+      room.handleMessage(playerId, { t: 'in', f: [f] });
     }
     room.update(room.now + DT * 1000);
   }
@@ -84,9 +84,9 @@ describe('game room', () => {
     const z0 = p.move.pos.z;
     // Send 10 seconds of inputs in a single tick.
     const f: InputTuple[] = [];
-    for (let i = 1; i <= 12; i++) f.push([i, 1 / 30, Keys.FWD, 0, 0]);
+    for (let i = 1; i <= 12; i++) f.push([i, 1 / 30, Keys.FWD, 0, 0, room.now]);
     for (let k = 0; k < 25; k++) {
-      room.handleMessage(p.id, { t: 'in', rt: room.now, f: f.map((t) => [t[0] + k * 12, t[1], t[2], t[3], t[4]] as InputTuple) });
+      room.handleMessage(p.id, { t: 'in', f: f.map((t) => [t[0] + k * 12, t[1], t[2], t[3], t[4], t[5]] as InputTuple) });
     }
     room.update(room.now + 16);
     const moved = Math.abs(p.move.pos.z - z0);
@@ -157,6 +157,92 @@ describe('game room', () => {
     const shots = sink.events(a.id).filter((e) => e.e === 'shot' && e.id === a.id);
     expect(shots.length).toBe(1);
     expect(a.weapon.ammo[0].mag).toBe(WEAPONS.sniper.magSize - 1);
+  });
+
+  it('never lets a scripted strafe-jumper exceed sprint speed', () => {
+    const p = room.addHuman('Hopper', 'rifle');
+    advance(room, MATCH.COUNTDOWN_S + 0.1);
+    p.move.pos.x = 0;
+    p.move.pos.y = 0.05;
+    p.move.pos.z = 0;
+    const seq = { seq: 0 };
+    let maxSpeed = 0;
+    for (let i = 0; i < 600; i++) {
+      const dir = i % 12 < 6 ? Keys.LEFT : Keys.RIGHT;
+      const keys = Keys.FWD | Keys.SPRINT | dir | (i % 2 ? Keys.JUMP : 0);
+      const f: InputTuple = [++seq.seq, 1 / 250, keys, (i * 0.15) % (Math.PI * 2), 0, room.now];
+      room.handleMessage(p.id, { t: 'in', f: [f] });
+      room.update(room.now + 4);
+      maxSpeed = Math.max(maxSpeed, Math.hypot(p.move.vel.x, p.move.vel.z));
+    }
+    expect(maxSpeed).toBeLessThanOrEqual(7.4 * 1.02 + 1e-6);
+  });
+
+  it('reports zero-damage hits on spawn-protected targets and does not count them as accuracy', () => {
+    const a = room.addHuman('Shooter', 'rifle');
+    const v = room.addHuman('Victim', 'smg');
+    advance(room, MATCH.COUNTDOWN_S + 0.1);
+    const yaw = -Math.PI / 2;
+    a.move.pos.x = 0;
+    a.move.pos.y = 3.8;
+    a.move.pos.z = -18;
+    v.move.pos.x = 6;
+    v.move.pos.y = 3.8;
+    v.move.pos.z = -18;
+    a.protectedUntil = 0;
+    v.protectedUntil = room.now + 60_000; // protected for the whole test
+    advance(room, 0.5, a.id, Keys.CROUCH | Keys.ADS, yaw);
+    sink.clear();
+    advance(room, 0.05, a.id, Keys.ADS | Keys.CROUCH | Keys.FIRE, yaw, 0, { seq: 5000 });
+    const hits = sink.events(a.id).filter((e) => e.e === 'hit');
+    expect(hits.length).toBe(1);
+    expect(hits[0].e === 'hit' && hits[0].d).toBe(0);
+    expect(v.hp).toBe(COMBAT.MAX_HP);
+    expect(a.shots).toBe(1);
+    expect(a.hits).toBe(0);
+  });
+
+  it('rewinds targets to the shooter render time (lag compensation)', () => {
+    const a = room.addHuman('Shooter', 'sniper');
+    const v = room.addHuman('Runner', 'smg');
+    advance(room, MATCH.COUNTDOWN_S + 0.1);
+    const yaw = -Math.PI / 2; // looking toward +X
+    a.move.pos.x = 0;
+    a.move.pos.y = 3.8;
+    a.move.pos.z = -18;
+    v.move.pos.x = 8;
+    v.move.pos.y = 3.8;
+    v.move.pos.z = -18;
+    a.protectedUntil = 0;
+    v.protectedUntil = 0;
+    advance(room, 0.6, a.id, Keys.ADS, yaw); // history fills with the victim at x=8
+    const tOld = room.now;
+    // Victim teleports far away (as if it moved), but the shooter renders 150 ms in the past.
+    v.move.pos.x = 8;
+    v.move.pos.z = -14;
+    advance(room, 0.2);
+    sink.clear();
+    const seq = { seq: 9000 };
+    const f: InputTuple = [++seq.seq, DT, Keys.ADS | Keys.FIRE, yaw, 0, tOld];
+    room.handleMessage(a.id, { t: 'in', f: [f] });
+    room.update(room.now + DT * 1000);
+    const hit = sink.events(a.id).find((e) => e.e === 'hit');
+    expect(hit, 'shot at the old position should still land thanks to rewind').toBeTruthy();
+    expect(v.hp + v.armor).toBeLessThan(COMBAT.MAX_HP + COMBAT.SPAWN_ARMOR);
+  });
+
+  it('lets a player rejoin without creating a ghost', () => {
+    const p = room.addHuman('Blinky', 'rifle');
+    advance(room, MATCH.COUNTDOWN_S + 0.1);
+    advance(room, 0.5, p.id, Keys.FWD, p.yaw, 0, { seq: 0 });
+    const before = room.players.size;
+    room.markDisconnected(p.id);
+    expect(room.rejoin(p.id)).toBe(true);
+    expect(room.players.size).toBe(before);
+    expect(p.lastSeq).toBe(-1);
+    // Fresh sequence numbers are accepted after the rejoin.
+    advance(room, 0.2, p.id, Keys.FWD, p.yaw, 0, { seq: 0 });
+    expect(p.lastSeq).toBeGreaterThan(0);
   });
 
   it('fills with bots and removes them as humans join', () => {

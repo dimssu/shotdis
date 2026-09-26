@@ -18,19 +18,23 @@ describe('client message validation', () => {
     expect(parseClientMessage(JSON.stringify({ t: 'nope' }))).toBeNull();
     expect(parseClientMessage(JSON.stringify({ t: 'join', name: 5, weapon: 'rifle', v: 1 }))).toBeNull();
     expect(parseClientMessage(JSON.stringify({ t: 'join', name: 'x', weapon: 'bazooka', v: 1 }))).toBeNull();
-    expect(parseClientMessage(JSON.stringify({ t: 'in', rt: 0, f: [] }))).toBeNull();
-    expect(parseClientMessage(JSON.stringify({ t: 'in', rt: 0, f: [[1, 5, 0, 0, 0]] }))).toBeNull(); // dt too big
-    expect(parseClientMessage(JSON.stringify({ t: 'in', rt: 0, f: [[1, 0.016, -1, 0, 0]] }))).toBeNull();
-    expect(parseClientMessage(JSON.stringify({ t: 'in', rt: 0, f: [[1, 0.016, 0, 0, 9]] }))).toBeNull(); // pitch out of range
-    expect(parseClientMessage(JSON.stringify({ t: 'in', rt: 0, f: [[1.5, 0.016, 0, 0, 0]] }))).toBeNull(); // non-integer seq
-    expect(parseClientMessage(JSON.stringify({ t: 'in', rt: 0, f: new Array(50).fill([1, 0.016, 0, 0, 0]) }))).toBeNull();
+    expect(parseClientMessage(JSON.stringify({ t: 'in', f: [] }))).toBeNull();
+    expect(parseClientMessage(JSON.stringify({ t: 'in', f: [[1, 5, 0, 0, 0, 0]] }))).toBeNull(); // dt too big
+    expect(parseClientMessage(JSON.stringify({ t: 'in', f: [[1, 0.016, -1, 0, 0, 0]] }))).toBeNull();
+    expect(parseClientMessage(JSON.stringify({ t: 'in', f: [[1, 0.016, 0, 0, 9, 0]] }))).toBeNull(); // pitch out of range
+    expect(parseClientMessage(JSON.stringify({ t: 'in', f: [[1.5, 0.016, 0, 0, 0, 0]] }))).toBeNull(); // non-integer seq
+    expect(parseClientMessage(JSON.stringify({ t: 'in', f: [[1, 0.016, 0, 0, 0]] }))).toBeNull(); // missing render time
+    expect(parseClientMessage(JSON.stringify({ t: 'in', f: [[1, 0.016, 0, 0, 0, -5]] }))).toBeNull(); // negative render time
+    expect(parseClientMessage(JSON.stringify({ t: 'in', f: new Array(50).fill([1, 0.016, 0, 0, 0, 0]) }))).toBeNull();
+    expect(parseClientMessage(JSON.stringify({ t: 'join', name: 'x', weapon: 'pistol', v: 1 }))).toBeNull(); // sidearm is not a primary
     expect(parseClientMessage('x'.repeat(10000))).toBeNull();
     expect(parseClientMessage(JSON.stringify({ t: 'ping', c: 'now' }))).toBeNull();
   });
 
   it('accepts a valid input batch', () => {
-    const m = parseClientMessage(JSON.stringify({ t: 'in', rt: 1234.5, f: [[1, 1 / 60, 3, 0.5, -0.2]] }));
+    const m = parseClientMessage(JSON.stringify({ t: 'in', f: [[1, 1 / 60, 3, 0.5, -0.2, 1234.5]] }));
     expect(m?.t).toBe('in');
+    expect(parseClientMessage(JSON.stringify({ t: 'join', name: 'Ace', weapon: 'rifle', v: PROTOCOL_VERSION, token: 'abc' }))?.t).toBe('join');
   });
 });
 

@@ -12,6 +12,7 @@ export interface RoomManagerOptions {
   roomSize: number;
   botFill: number;
   idleTimeoutMs: number;
+  maxRooms?: number;
   now: () => number;
 }
 
@@ -49,14 +50,15 @@ export class RoomManager {
     }
   }
 
-  /** Pick the fullest room that still has space, or create one. */
-  findRoom(): GameRoom {
+  /** Pick the fullest room that still has space, or create one. Returns null when the room cap is reached. */
+  findRoom(): GameRoom | null {
     let best: GameRoom | null = null;
     for (const room of this.rooms.values()) {
       if (!room.hasRoomForHuman()) continue;
       if (!best || room.humanCount() > best.humanCount()) best = room;
     }
     if (best) return best;
+    if (this.rooms.size >= (this.opts.maxRooms ?? 48)) return null;
     return this.createRoom();
   }
 

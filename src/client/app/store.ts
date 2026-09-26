@@ -29,6 +29,7 @@ export interface HitMarker {
   id: number;
   headshot: boolean;
   kill: boolean;
+  blocked: boolean;
   at: number;
 }
 
@@ -130,7 +131,7 @@ interface State {
   setHud(patch: Partial<HudState>): void;
   pushKill(e: Omit<KillFeedEntry, 'id' | 'at'>): void;
   pushDamage(angle: number): void;
-  pushHitMarker(headshot: boolean, kill: boolean): void;
+  pushHitMarker(headshot: boolean, kill: boolean, blocked?: boolean): void;
   pushBanner(text: string, kind: Banner['kind'], sub?: string): void;
   pushDamageNumber(x: number, y: number, value: number, headshot: boolean): void;
   flashDamage(): void;
@@ -220,7 +221,8 @@ export const useStore = create<State>((set, get) => ({
   setHud: (patch) => set((s) => ({ hud: { ...s.hud, ...patch } })),
   pushKill: (e) => set((s) => ({ killFeed: [...s.killFeed.slice(-5), { ...e, id: nextId++, at: performance.now() }] })),
   pushDamage: (angle) => set((s) => ({ damageIndicators: [...s.damageIndicators.slice(-7), { id: nextId++, angle, at: performance.now() }] })),
-  pushHitMarker: (headshot, kill) => set((s) => ({ hitMarkers: [...s.hitMarkers.slice(-3), { id: nextId++, headshot, kill, at: performance.now() }] })),
+  pushHitMarker: (headshot, kill, blocked = false) =>
+    set((s) => ({ hitMarkers: [...s.hitMarkers.slice(-3), { id: nextId++, headshot, kill, blocked, at: performance.now() }] })),
   pushBanner: (text, kind, sub) => set((s) => ({ banners: [...s.banners.slice(-2), { id: nextId++, text, sub, kind, at: performance.now() }] })),
   pushDamageNumber: (x, y, value, headshot) =>
     set((s) => ({ damageNumbers: [...s.damageNumbers.slice(-11), { id: nextId++, x, y, value, headshot, at: performance.now() }] })),

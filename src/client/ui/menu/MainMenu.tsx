@@ -3,7 +3,6 @@ import { useStore } from '@client/app/store';
 import { fetchServerInfo, SERVER_URL } from '@client/app/serverStatus';
 import { audio } from '@client/game/audio/AudioManager';
 import { Button } from '../common/Controls';
-import { MenuBackground } from './MenuBackground';
 import { NamePrompt } from './NamePrompt';
 
 export function MainMenu() {
@@ -56,7 +55,6 @@ export function MainMenu() {
 
   return (
     <>
-      <MenuBackground />
       <div className="menu">
         <div className="menu-panel">
           <h1 className="logo">

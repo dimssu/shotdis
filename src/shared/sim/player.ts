@@ -47,6 +47,8 @@ export class SimPlayer {
   timeBudget = 0.1;
   lastInputWall = 0;
   renderTime = 0;
+  /** Accumulated real time for bot simulation steps. */
+  botAccum = 0;
   ping = 0;
   connected = true;
   joinedAt = 0;
@@ -137,6 +139,7 @@ export class SimPlayer {
     t[YOU.BLOOM] = round3(w.bloom);
     t[YOU.SIM_TIME] = round3(w.simTime);
     t[YOU.WEAPON0] = weaponIndex(w.ids[0]);
+    t[YOU.PREV_KEYS] = w.prevKeys;
     return t;
   }
 

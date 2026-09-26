@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 
+const tmpColor = new THREE.Color();
+
 /* ------------------------------------------------------------------ */
 /* Tracers: one LineSegments object, per-segment color used as fade    */
 /* ------------------------------------------------------------------ */
@@ -33,19 +35,19 @@ export class TracerPool {
   spawn(from: THREE.Vector3, to: THREE.Vector3, color: number, life = 0.09): void {
     const i = this.next;
     this.next = (this.next + 1) % this.max;
+    if (this.life[i] <= 0) this.active++;
     this.pos[i * 6] = from.x;
     this.pos[i * 6 + 1] = from.y;
     this.pos[i * 6 + 2] = from.z;
     this.pos[i * 6 + 3] = to.x;
     this.pos[i * 6 + 4] = to.y;
     this.pos[i * 6 + 5] = to.z;
-    const c = new THREE.Color(color);
+    const c = tmpColor.setHex(color);
     this.base[i * 3] = c.r;
     this.base[i * 3 + 1] = c.g;
     this.base[i * 3 + 2] = c.b;
     this.life[i] = life;
     this.maxLife[i] = life;
-    this.active++;
   }
 
   update(dt: number): void {
@@ -239,6 +241,7 @@ export class CasingPool {
   spawn(x: number, y: number, z: number, vx: number, vy: number, vz: number, floorY: number): void {
     const i = this.next;
     this.next = (this.next + 1) % this.max;
+    if (this.life[i] <= 0) this.active++;
     this.pos[i * 3] = x;
     this.pos[i * 3 + 1] = y;
     this.pos[i * 3 + 2] = z;
@@ -250,12 +253,14 @@ export class CasingPool {
     this.rot[i * 3 + 2] = Math.random() * 6;
     this.life[i] = 1.6;
     this.floor[i] = floorY;
-    this.active = Math.min(this.max, this.active + 1);
-    this.mesh.count = this.active;
+    this.mesh.count = this.max;
   }
 
   update(dt: number): void {
-    if (this.active === 0) return;
+    if (this.active === 0) {
+      this.mesh.count = 0;
+      return;
+    }
     for (let i = 0; i < this.max; i++) {
       if (this.life[i] <= 0) {
         this.dummy.position.set(0, -1000, 0);
@@ -264,6 +269,7 @@ export class CasingPool {
         continue;
       }
       this.life[i] -= dt;
+      if (this.life[i] <= 0) this.active--;
       this.vel[i * 3 + 1] -= 12 * dt;
       this.pos[i * 3] += this.vel[i * 3] * dt;
       this.pos[i * 3 + 1] += this.vel[i * 3 + 1] * dt;

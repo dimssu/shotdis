@@ -54,9 +54,9 @@ export class LocalPlayer {
   }
 
   /** Advance one fixed step with the given input. Returns the weapon step result (fired etc.). */
-  step(keys: number, yaw: number, pitch: number, dt: number, out: WeaponStepResult): InputTuple {
+  step(keys: number, yaw: number, pitch: number, dt: number, renderTime: number, out: WeaponStepResult): InputTuple {
     const seq = ++this.seq;
-    const input: InputTuple = [seq, dt, keys, yaw, pitch];
+    const input: InputTuple = [seq, dt, keys, yaw, pitch, Math.max(0, Math.round(renderTime * 10) / 10)];
     this.pending.push(input);
     if (this.pending.length > 180) this.pending.shift();
     this.prevPos.x = this.move.pos.x;
@@ -127,7 +127,8 @@ export class LocalPlayer {
     w.nextFireAt = you[YOU.NEXT_FIRE];
     w.bloom = you[YOU.BLOOM];
     w.simTime = you[YOU.SIM_TIME];
-    w.prevKeys = this.pending.length > 0 ? this.weapon.prevKeys : this.weapon.prevKeys;
+    // The server's key mask after the acknowledged input, so replayed edges match exactly.
+    w.prevKeys = you[YOU.PREV_KEYS] ?? this.weapon.prevKeys;
 
     // Replay pending inputs on top of the authoritative state.
     for (const input of this.pending) this.apply(m, w, input, tmpOut);

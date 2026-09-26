@@ -8,10 +8,13 @@ export class ServerClock {
   private samples: { offset: number; rtt: number }[] = [];
   private initialized = false;
 
-  /** Seed the clock from the welcome message (server time at receive). */
-  seed(serverTime: number, now: number): void {
-    this.offset = serverTime - now;
-    this.initialized = true;
+  /** Seed the clock from the welcome message. `joinRtt` is the time between sending join and receiving welcome. */
+  seed(serverTime: number, now: number, joinRtt = 0): void {
+    this.samples = [];
+    this.rtt = joinRtt;
+    this.offset = serverTime + joinRtt / 2 - now;
+    // The first real pong replaces this estimate outright.
+    this.initialized = false;
   }
 
   onPong(clientSent: number, serverTime: number, now: number): void {

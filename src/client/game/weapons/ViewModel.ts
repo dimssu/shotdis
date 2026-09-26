@@ -285,9 +285,15 @@ export class ViewModel {
   dispose(): void {
     for (const b of this.built.values()) {
       b.group.traverse((o) => {
-        if (o instanceof THREE.Mesh) o.geometry.dispose();
+        if (o instanceof THREE.Mesh) {
+          o.geometry.dispose();
+          const m = o.material as THREE.Material;
+          if (m !== metal && m !== metalLight && m !== grip) m.dispose();
+        }
       });
     }
     this.built.clear();
+    this.flash.material.map?.dispose();
+    this.flash.material.dispose();
   }
 }

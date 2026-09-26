@@ -256,6 +256,17 @@ export function stepPlayer(s: MoveState, keys: number, yaw: number, dt: number, 
     }
   }
 
+  // Hard cap on horizontal speed: no input pattern (strafe-jumping, high-rate inputs) may exceed sprint.
+  {
+    const maxSpeed = MOVE.SPRINT_SPEED * Math.max(speedMult, 1) * 1.02;
+    const hs = Math.hypot(s.vel.x, s.vel.z);
+    if (hs > maxSpeed) {
+      const k = maxSpeed / hs;
+      s.vel.x *= k;
+      s.vel.z *= k;
+    }
+  }
+
   // Jump
   const jumpKey = (keys & Keys.JUMP) !== 0;
   if (jumpKey && !s.jumpHeld && s.onGround) {

@@ -129,7 +129,7 @@ function Feedback() {
         </div>
       ))}
       {hitMarkers.map((h) => (
-        <div key={h.id} className={`hitmarker ${h.headshot ? 'hs' : ''} ${h.kill ? 'kill' : ''}`}>
+        <div key={h.id} className={`hitmarker ${h.headshot ? 'hs' : ''} ${h.kill ? 'kill' : ''} ${h.blocked ? 'blocked' : ''}`} title={h.blocked ? 'Spawn protected' : undefined}>
           <i style={{ transform: 'translate(-11px,-9px) rotate(45deg)' }} />
           <i style={{ transform: 'translate(2px,-9px) rotate(-45deg)' }} />
           <i style={{ transform: 'translate(-11px,7px) rotate(-45deg)' }} />
@@ -230,7 +230,19 @@ export function HUD({ onClickToPlay }: { onClickToPlay: () => void }) {
         </div>
       )}
       {!locked && !paused && !results && !reconnecting && phase !== 'ended' && (
-        <div className="click-to-play" onClick={onClickToPlay} role="button" tabIndex={0} style={{ pointerEvents: 'auto' }}>
+        <div
+          className="click-to-play"
+          onClick={onClickToPlay}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onClickToPlay();
+            }
+          }}
+          role="button"
+          tabIndex={0}
+          style={{ pointerEvents: 'auto' }}
+        >
           <b>CLICK TO PLAY</b>
           <span>MOUSE LOCKS TO THE ARENA · ESC TO PAUSE</span>
         </div>
