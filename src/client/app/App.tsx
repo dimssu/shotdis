@@ -18,6 +18,15 @@ import { useStore, type GameMode } from './store';
 
 let pendingTransport: Transport | null = null;
 
+/** `?map=neon` picks the practice map during development. */
+function devMapIndex(): number | null {
+  if (!import.meta.env.DEV) return null;
+  const id = new URLSearchParams(location.search).get('map');
+  if (!id) return null;
+  const i = MAPS.findIndex((m) => m.id === id);
+  return i >= 0 ? i : null;
+}
+
 function GameView({ onLeave }: { onLeave: (reason?: string) => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<Game | null>(null);
@@ -44,6 +53,7 @@ function GameView({ onLeave }: { onLeave: (reason?: string) => void }) {
         transport,
         name: settings.name,
         weapon: settings.weapon,
+        serverUrl: transport.kind === 'online' ? SERVER_URL : undefined,
         onLeave: (reason) => onLeave(reason),
         onProgress: (label, value) => useStore.setState({ loadingLabel: label, loadingProgress: value }),
       });
@@ -174,7 +184,7 @@ export function App() {
         weapon: s.weapon,
         bots: s.practiceBots,
         difficulty: s.practiceDifficulty,
-        mapIndex: Math.floor(Math.random() * MAPS.length),
+        mapIndex: devMapIndex() ?? Math.floor(Math.random() * MAPS.length),
       });
     }
     useStore.setState({ loadingProgress: 0, loadingLabel: 'Starting' });

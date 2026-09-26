@@ -17,9 +17,9 @@ export interface ViewModelInput {
   reducedMotion: boolean;
 }
 
-const metal = new THREE.MeshStandardMaterial({ color: 0x262a33, roughness: 0.45, metalness: 0.75 });
-const metalLight = new THREE.MeshStandardMaterial({ color: 0x59606e, roughness: 0.4, metalness: 0.7 });
-const grip = new THREE.MeshStandardMaterial({ color: 0x15171c, roughness: 0.9, metalness: 0.1 });
+const metal = new THREE.MeshStandardMaterial({ color: 0x343a45, roughness: 0.5, metalness: 0.35 });
+const metalLight = new THREE.MeshStandardMaterial({ color: 0x6b7382, roughness: 0.45, metalness: 0.3 });
+const grip = new THREE.MeshStandardMaterial({ color: 0x1c1f26, roughness: 0.9, metalness: 0.05 });
 
 function part(w: number, h: number, d: number, x: number, y: number, z: number, m: THREE.Material = metal): THREE.Mesh {
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
@@ -38,7 +38,7 @@ interface Built {
 /** Build a stylized weapon out of boxes. Coordinates are in camera space (z toward the viewer is +). */
 function buildWeapon(id: WeaponId): Built {
   const g = new THREE.Group();
-  const accent = new THREE.MeshStandardMaterial({ color: WEAPONS[id].tracerColor, emissive: WEAPONS[id].tracerColor, emissiveIntensity: 1.2, roughness: 0.4 });
+  const accent = new THREE.MeshStandardMaterial({ color: WEAPONS[id].tracerColor, emissive: WEAPONS[id].tracerColor, emissiveIntensity: 0.45, roughness: 0.4 });
   let muzzle: THREE.Vector3;
   let rest: THREE.Vector3;
   let ads: THREE.Vector3;
@@ -64,7 +64,7 @@ function buildWeapon(id: WeaponId): Built {
       g.add(part(0.035, 0.03, 0.14, 0, 0.005, 0.24, metal)); // stock
       g.add(part(0.012, 0.025, 0.012, 0, 0.055, -0.3, accent)); // front sight
       g.add(part(0.04, 0.02, 0.012, 0, 0.055, 0.1, metalLight)); // rear
-      g.add(part(0.062, 0.01, 0.12, 0, 0.03, -0.05, accent)); // accent stripe
+      g.add(part(0.062, 0.006, 0.12, 0, 0.041, -0.05, accent)); // accent stripe
       muzzle = new THREE.Vector3(0, 0.005, -0.36);
       rest = new THREE.Vector3(0.22, -0.2, -0.42);
       ads = new THREE.Vector3(0, -0.135, -0.3);
@@ -78,7 +78,7 @@ function buildWeapon(id: WeaponId): Built {
       g.add(part(0.045, 0.14, 0.06, 0, -0.1, 0.1, grip)); // grip
       g.add(part(0.045, 0.06, 0.22, 0, -0.01, 0.3, grip)); // stock
       g.add(part(0.012, 0.02, 0.012, 0, 0.05, -0.58, accent)); // bead
-      g.add(part(0.062, 0.01, 0.08, 0, 0.045, 0.0, accent));
+      g.add(part(0.062, 0.006, 0.08, 0, 0.041, 0.0, accent));
       muzzle = new THREE.Vector3(0, 0.02, -0.6);
       rest = new THREE.Vector3(0.2, -0.21, -0.4);
       ads = new THREE.Vector3(0, -0.13, -0.28);
@@ -110,14 +110,14 @@ function buildWeapon(id: WeaponId): Built {
       g.add(part(0.04, 0.05, 0.2, 0, 0.0, 0.32, grip)); // stock
       g.add(part(0.012, 0.028, 0.012, 0, 0.06, -0.42, accent)); // front sight
       g.add(part(0.04, 0.022, 0.012, 0, 0.06, 0.1, metalLight)); // rear
-      g.add(part(0.062, 0.01, 0.16, 0, 0.038, -0.14, accent)); // accent stripe
+      g.add(part(0.062, 0.006, 0.16, 0, 0.044, -0.14, accent)); // accent stripe
       muzzle = new THREE.Vector3(0, 0.005, -0.5);
-      rest = new THREE.Vector3(0.21, -0.2, -0.4);
-      ads = new THREE.Vector3(0, -0.14, -0.3);
+      rest = new THREE.Vector3(0.24, -0.23, -0.42);
+      ads = new THREE.Vector3(0, -0.145, -0.32);
       break;
     }
   }
-  return { group: g, muzzle, rest, ads, restRot: new THREE.Euler(0, 0.04, 0) };
+  return { group: g, muzzle, rest, ads, restRot: new THREE.Euler(0.02, 0.06, 0.03) };
 }
 
 /**
@@ -126,7 +126,7 @@ function buildWeapon(id: WeaponId): Built {
  */
 export class ViewModel {
   scene = new THREE.Scene();
-  camera = new THREE.PerspectiveCamera(58, 1, 0.01, 5);
+  camera = new THREE.PerspectiveCamera(52, 1, 0.01, 5);
   private root = new THREE.Group();
   private built = new Map<WeaponId, Built>();
   private current: Built | null = null;
@@ -146,12 +146,14 @@ export class ViewModel {
   private flashLight: THREE.PointLight;
   private tmp = new THREE.Vector3();
 
+  private hemi = new THREE.HemisphereLight(0xdfe7ff, 0x3a2f28, 1.1);
+  private dirLight = new THREE.DirectionalLight(0xffffff, 1.4);
+
   constructor() {
     this.scene.add(this.root);
-    this.scene.add(new THREE.HemisphereLight(0xdfe7ff, 0x3a2f28, 1.1));
-    const dir = new THREE.DirectionalLight(0xffffff, 1.4);
-    dir.position.set(0.6, 1, 0.4);
-    this.scene.add(dir);
+    this.scene.add(this.hemi);
+    this.dirLight.position.set(0.6, 1, 0.4);
+    this.scene.add(this.dirLight);
     this.flashLight = new THREE.PointLight(0xffc27a, 0, 2.5, 2);
     this.scene.add(this.flashLight);
     const c = document.createElement('canvas');
@@ -170,6 +172,15 @@ export class ViewModel {
     this.flash.visible = false;
     this.flash.renderOrder = 5;
     this.scene.add(this.flash);
+  }
+
+  /** Match the weapon lighting to the arena so it does not look pasted on. */
+  setLighting(skyColor: number, groundColor: number, sunColor: number, intensity: number): void {
+    this.hemi.color.setHex(skyColor);
+    this.hemi.groundColor.setHex(groundColor);
+    this.hemi.intensity = 0.8 * intensity;
+    this.dirLight.color.setHex(sunColor);
+    this.dirLight.intensity = 1.0 * intensity;
   }
 
   setWeapon(id: WeaponId): void {

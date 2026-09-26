@@ -101,9 +101,15 @@ function rampGeometry(r: RampSolid): THREE.BufferGeometry {
   return g;
 }
 
-export function solidGeometry(s: Solid): THREE.BufferGeometry {
-  if (s.kind === 'box') return boxGeometry(s.x, s.y, s.z, s.w, s.h, s.d);
-  return rampGeometry(s);
+export function solidGeometry(s: Solid, index = 0): THREE.BufferGeometry {
+  const g = s.kind === 'box' ? boxGeometry(s.x, s.y, s.z, s.w, s.h, s.d) : rampGeometry(s);
+  // Slight per-solid brightness variation breaks up flat walls of identical material.
+  const n = (g.attributes.position as THREE.BufferAttribute).count;
+  const jitter = 0.9 + (((index * 7919) % 97) / 97) * 0.2;
+  const colors = new Float32Array(n * 3);
+  colors.fill(jitter);
+  g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  return g;
 }
 
 let noiseTex: THREE.CanvasTexture | null = null;
@@ -115,13 +121,14 @@ export function materialFor(id: MaterialId, quality: Quality): THREE.Material {
     return new THREE.MeshBasicMaterial({ color: new THREE.Color(def.emissive ?? def.color).multiplyScalar(def.emissiveIntensity ?? 1.5), toneMapped: false });
   }
   if (quality === 'low') {
-    return new THREE.MeshLambertMaterial({ color: def.color, map: noiseTex });
+    return new THREE.MeshLambertMaterial({ color: def.color, map: noiseTex, vertexColors: true });
   }
   return new THREE.MeshStandardMaterial({
     color: def.color,
     roughness: def.roughness,
     metalness: def.metalness,
     map: noiseTex,
+    vertexColors: true,
     emissive: def.emissive ?? 0x000000,
     emissiveIntensity: def.emissiveIntensity ?? 0,
   });
@@ -135,11 +142,11 @@ export function buildMap(map: MapDef, quality: Quality, shadows: boolean): Built
   const group = new THREE.Group();
   group.name = `map:${map.id}`;
   const byMat = new Map<MaterialId, THREE.BufferGeometry[]>();
-  for (const s of map.solids) {
+  map.solids.forEach((s, i) => {
     let list = byMat.get(s.mat);
     if (!list) byMat.set(s.mat, (list = []));
-    list.push(solidGeometry(s));
-  }
+    list.push(solidGeometry(s, i));
+  });
   const meshes: THREE.Mesh[] = [];
   const materials: THREE.Material[] = [];
   for (const [mat, geoms] of byMat) {
@@ -183,6 +190,10 @@ export function buildMap(map: MapDef, quality: Quality, shadows: boolean): Built
     sun.shadow.bias = -0.0008;
     sun.shadow.normalBias = 0.05;
   }
+  // Soft fill from the opposite side so shadowed faces stay readable.
+  const fill = new THREE.DirectionalLight(map.ambient.sky, map.sun.intensity * 0.3);
+  fill.position.set(-d.x * 40, 25, -d.z * 40);
+  group.add(fill);
   const pointLights: THREE.PointLight[] = [];
   if (quality !== 'low') {
     const max = quality === 'high' ? map.lights.length : Math.min(2, map.lights.length);

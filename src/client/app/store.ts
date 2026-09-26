@@ -104,6 +104,7 @@ interface State {
   scoreboardOpen: boolean;
   connectStatus: string;
   connectError: string | null;
+  reconnecting: boolean;
   loadingProgress: number;
   loadingLabel: string;
   hud: HudState;
@@ -185,6 +186,7 @@ export const useStore = create<State>((set, get) => ({
   scoreboardOpen: false,
   connectStatus: '',
   connectError: null,
+  reconnecting: false,
   loadingProgress: 0,
   loadingLabel: '',
   hud: { ...initialHud },
@@ -262,6 +264,7 @@ export const useStore = create<State>((set, get) => ({
       scoreboardOpen: false,
       pointerLocked: false,
       connectError: null,
+      reconnecting: false,
     }),
 }));
 

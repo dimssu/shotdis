@@ -207,6 +207,8 @@ export function HUD({ onClickToPlay }: { onClickToPlay: () => void }) {
   const phase = useStore((s) => s.hud.phase);
   const hit = useStore((s) => s.hitMarkers.length > 0);
   const uiScale = useStore((s) => s.settings.uiScale);
+  const reconnecting = useStore((s) => s.reconnecting);
+  const connectStatus = useStore((s) => s.connectStatus);
   return (
     <div className="hud" style={{ '--ui-scale': uiScale } as React.CSSProperties}>
       {scoped && <div className="scope" />}
@@ -220,7 +222,14 @@ export function HUD({ onClickToPlay }: { onClickToPlay: () => void }) {
       <Countdown />
       <Death />
       <Debug />
-      {!locked && !paused && !results && phase !== 'ended' && (
+      {reconnecting && (
+        <div className="click-to-play" style={{ cursor: 'default' }} role="status" aria-live="assertive">
+          <div className="spinner" />
+          <b>RECONNECTING</b>
+          <span>{connectStatus || 'CONNECTION LOST'}</span>
+        </div>
+      )}
+      {!locked && !paused && !results && !reconnecting && phase !== 'ended' && (
         <div className="click-to-play" onClick={onClickToPlay} role="button" tabIndex={0} style={{ pointerEvents: 'auto' }}>
           <b>CLICK TO PLAY</b>
           <span>MOUSE LOCKS TO THE ARENA · ESC TO PAUSE</span>

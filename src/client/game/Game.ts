@@ -15,7 +15,7 @@ import { CameraRig } from './camera/CameraRig';
 import { CasingPool, FlashLight, SparkPool, TracerPool } from './effects/Effects';
 import { InputManager } from './input/InputManager';
 import { ServerClock } from './net/Clock';
-import type { Transport } from './net/Transport';
+import { WsTransport, type Transport } from './net/Transport';
 import { LocalPlayer } from './player/LocalPlayer';
 import { RemotePlayer } from './player/RemotePlayer';
 import { ViewModel } from './weapons/ViewModel';
@@ -28,6 +28,8 @@ export interface GameOptions {
   transport: Transport;
   name: string;
   weapon: WeaponId;
+  /** WebSocket URL for reconnects (online mode only). */
+  serverUrl?: string;
   onLeave(reason?: string): void;
   onProgress(label: string, value: number): void;
 }
@@ -105,7 +107,7 @@ export class Game {
     });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMappingExposure = 1.2;
     this.renderer.autoClear = false;
     this.rig = new CameraRig(window.innerWidth / window.innerHeight);
     this.rig.hFov = s.fov;
@@ -171,17 +173,78 @@ export class Game {
   private waitForWelcome(): Promise<void> {
     if (this.welcomed) return Promise.resolve();
     return new Promise((resolve, reject) => {
-      this.welcomeResolve = resolve;
-      this.welcomeReject = reject;
       const timer = setTimeout(() => {
-        if (!this.welcomed) reject(new Error('The server did not respond'));
+        this.welcomeResolve = null;
+        this.welcomeReject = null;
+        reject(new Error('The server did not respond'));
       }, 10000);
-      const done = resolve;
       this.welcomeResolve = () => {
         clearTimeout(timer);
-        done();
+        this.welcomeResolve = null;
+        this.welcomeReject = null;
+        resolve();
+      };
+      this.welcomeReject = (e) => {
+        clearTimeout(timer);
+        this.welcomeResolve = null;
+        this.welcomeReject = null;
+        reject(e);
       };
     });
+  }
+
+  private swapTransport(t: Transport): void {
+    this.transport.onMessage = null;
+    this.transport.onClose = null;
+    this.transport.close();
+    this.transport = t;
+    t.onMessage = (m) => this.onMessage(m);
+    t.onClose = (reason) => this.onTransportClosed(reason);
+  }
+
+  /** Try to get back into a room after the socket dropped. */
+  private async reconnect(reason: string): Promise<void> {
+    if (this.reconnecting || this.disposed || !this.opts.serverUrl) {
+      if (!this.reconnecting) this.opts.onLeave(`Disconnected: ${reason}`);
+      return;
+    }
+    this.reconnecting = true;
+    useStore.setState({ reconnecting: true, death: null, results: null });
+    this.input.releaseLock();
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      await delay(attempt === 1 ? 400 : 1200 * attempt);
+      if (this.disposed) return;
+      useStore.setState({ connectStatus: `Attempt ${attempt} of 4` });
+      const ws = new WsTransport();
+      try {
+        await ws.connect(this.opts.serverUrl);
+      } catch {
+        continue;
+      }
+      if (this.disposed) {
+        ws.close();
+        return;
+      }
+      this.swapTransport(ws);
+      this.welcomed = false;
+      this.local.resetForJoin();
+      for (const id of [...this.players.keys()]) this.removePlayer(id);
+      this.myInfo = null;
+      this.inputBatch = [];
+      ws.send({ t: 'join', name: this.opts.name, weapon: useStore.getState().settings.weapon, v: PROTOCOL_VERSION });
+      try {
+        await this.waitForWelcome();
+        this.reconnecting = false;
+        useStore.setState({ reconnecting: false });
+        useStore.getState().setToast('Reconnected');
+        return;
+      } catch {
+        ws.close();
+      }
+    }
+    this.reconnecting = false;
+    useStore.setState({ reconnecting: false });
+    this.opts.onLeave('Lost the connection to the game server.');
   }
 
   stop(): void {
@@ -281,6 +344,7 @@ export class Game {
     if (this.sky.points) this.scene.add(this.sky.points);
     this.scene.fog = new THREE.Fog(map.sky.fog, map.sky.fogNear, map.sky.fogFar);
     this.scene.background = new THREE.Color(map.sky.fog);
+    this.viewModel.setLighting(map.ambient.sky, map.ambient.ground, map.sun.color, Math.min(1.4, map.ambient.intensity * 0.75));
     if (s.effects && s.quality !== 'low' && map.particles !== 'none') {
       this.particles = new AmbientParticles(map, map.particles, s.quality === 'high' ? 600 : 300);
       this.scene.add(this.particles.points);
@@ -389,8 +453,16 @@ export class Game {
   private onTransportClosed(reason: string): void {
     if (this.disposed) return;
     if (this.transport.kind === 'practice') return;
-    useStore.getState().setToast(`Disconnected: ${reason}`);
-    this.opts.onLeave(`Disconnected: ${reason}`);
+    if (!this.running) {
+      // Dropped while still loading: give up cleanly.
+      this.welcomeReject?.(new Error(`Disconnected: ${reason}`));
+      return;
+    }
+    if (/out of date|Version|Rate limit|too slow/i.test(reason)) {
+      this.opts.onLeave(`Disconnected: ${reason}`);
+      return;
+    }
+    void this.reconnect(reason);
   }
 
   /* ------------------------------------------------------------------ */
@@ -891,4 +963,8 @@ export class Game {
 
 function nextFrame(): Promise<void> {
   return new Promise((r) => setTimeout(r, 0));
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
 }

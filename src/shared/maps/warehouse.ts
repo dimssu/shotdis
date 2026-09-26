@@ -127,9 +127,9 @@ export const WAREHOUSE: MapDef = finalizeMap({
   name: 'WAREHOUSE',
   tagline: 'Compact industrial arena. Crates, catwalks and tight corners.',
   bounds,
-  sky: { top: 0x1b2230, bottom: 0x3a4250, fog: 0x2a3140, fogNear: 25, fogFar: 95 },
-  ambient: { sky: 0x9fb2c8, ground: 0x3a2f28, intensity: 0.85 },
-  sun: { dir: [-0.45, 1, 0.35], color: 0xffe6c4, intensity: 1.8 },
+  sky: { top: 0x223049, bottom: 0x7a6a5c, fog: 0x3e4756, fogNear: 30, fogFar: 110 },
+  ambient: { sky: 0xb9c8dc, ground: 0x4a3d33, intensity: 1.35 },
+  sun: { dir: [-0.45, 1, 0.35], color: 0xffe2bd, intensity: 2.6 },
   solids,
   spawns: [
     spawnTowards(-17, 0, -12.5, 0, 0),

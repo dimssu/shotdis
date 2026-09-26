@@ -15,6 +15,23 @@ function windows(x: number, y: number, z: number, w: number, d: number, rows: nu
   return out;
 }
 
+/** A grid of small lit windows on a facade. `axis` is the facade's normal axis. */
+function windowGrid(x: number, y: number, z: number, axis: 'x' | 'z', length: number, cols: number, rows: number, mats: ('neon_cyan' | 'neon_magenta' | 'neon_amber' | 'neon_white' | 'lamp')[]): Solid[] {
+  const out: Solid[] = [];
+  const step = length / cols;
+  for (let c = 0; c < cols; c++) {
+    for (let r = 0; r < rows; r++) {
+      if ((c * 3 + r * 5) % 4 === 0) continue; // some windows are dark
+      const mat = mats[(c + r) % mats.length];
+      const along = c * step + step * 0.25;
+      const yy = y + r * 1.7;
+      if (axis === 'x') out.push(strip(mat, x, yy, z + along, 0.05, 0.9, step * 0.5));
+      else out.push(strip(mat, x + along, yy, z, step * 0.5, 0.9, 0.05));
+    }
+  }
+  return out;
+}
+
 const solids: Solid[] = [
   // Street
   box('asphalt', -24, -1, -24, 48, 1, 48),
@@ -31,6 +48,14 @@ const solids: Solid[] = [
   ...windows(10.02, 3.5, -22, 0.05, 6, 3, 'neon_amber'),
   ...windows(-11.98, 3, 14, 0.05, 8, 2, 'neon_magenta'),
   ...windows(13, 4, 11.98, 10, 0.05, 2, 'neon_white'),
+  ...windowGrid(-9.97, 3.5, -22.5, 'x', 9, 5, 3, ['neon_amber', 'lamp', 'neon_white']), // B1 east face (alley)
+  ...windowGrid(9.97, 2.5, -23.5, 'x', 8, 4, 4, ['neon_cyan', 'lamp']), // B2 west face (alley)
+  ...windowGrid(-23, 2.0, -11.97, 'z', 12, 6, 1, ['lamp', 'neon_white']), // B1 south, ground floor
+  ...windowGrid(-11.97, 1.5, 13, 'x', 10, 5, 4, ['neon_magenta', 'lamp', 'neon_white']), // B3 east face
+  ...windowGrid(-23, 1.5, 11.97, 'z', 10, 5, 4, ['lamp', 'neon_cyan']), // B3 north face
+  ...windowGrid(13, 1.5, 11.97, 'z', 10, 5, 5, ['neon_white', 'lamp', 'neon_magenta']), // B4 north face
+  ...windowGrid(11.97, 1.5, 13, 'x', 10, 5, 5, ['lamp', 'neon_cyan']), // B4 west face
+  ...windowGrid(11, 6.5, -13.97, 'z', 12, 6, 3, ['neon_amber', 'lamp']), // B2 south face, upper floors
   strip('neon_magenta', -9.98, 6, -22, 0.06, 3, 0.4), // vertical sign B1 east face
   strip('neon_cyan', 11.98, 6, 14, 0.06, 3, 0.4),
   strip('trim', -24, 9.98, -24, 14, 0.3, 12),
@@ -119,9 +144,9 @@ export const NEON_DISTRICT: MapDef = finalizeMap({
   name: 'NEON DISTRICT',
   tagline: 'Rain-slick streets, glowing alleys and rooftop sightlines.',
   bounds,
-  sky: { top: 0x070a16, bottom: 0x1a1332, fog: 0x0f0c22, fogNear: 22, fogFar: 85 },
-  ambient: { sky: 0x5a63c8, ground: 0x2a1a3a, intensity: 0.9 },
-  sun: { dir: [0.3, 1, -0.5], color: 0x9fb4ff, intensity: 0.9 },
+  sky: { top: 0x1a2450, bottom: 0x4a3572, fog: 0x2a2456, fogNear: 30, fogFar: 110 },
+  ambient: { sky: 0x8f98ea, ground: 0x4a3860, intensity: 2.1 },
+  sun: { dir: [0.3, 1, -0.5], color: 0xc0ccff, intensity: 2.0 },
   solids,
   spawns: [
     spawnTowards(-18, 0, -10.5, 0, 0),

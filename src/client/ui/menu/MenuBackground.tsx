@@ -23,6 +23,7 @@ export function MenuBackground() {
     }
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.2;
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
     const shadows = quality === 'high';
     renderer.shadowMap.enabled = shadows;
