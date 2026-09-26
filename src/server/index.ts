@@ -29,7 +29,7 @@ manager.start();
 const http = createServer((req, res) => {
   const url = req.url ?? '/';
   if (url === '/health' || url === '/healthz') {
-    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*' });
     res.end(JSON.stringify({ ok: true, ...manager.stats(), uptime: Math.round(process.uptime()) }));
     return;
   }
@@ -112,6 +112,7 @@ wss.on('connection', (ws, req) => {
       session.room = room;
       session.playerId = player.id;
       manager.attach(room, player.id, { send: (m) => send(session, m), close: (reason) => ws.close(1008, reason) });
+      room.welcome(player.id);
       if (session.joinTimer) clearTimeout(session.joinTimer);
       console.log(`[join] ${name} (#${player.id}) -> ${room.id} from ${ip}`);
       return;

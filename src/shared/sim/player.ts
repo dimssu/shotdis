@@ -81,6 +81,8 @@ export class SimPlayer {
       score: this.score,
       streak: this.streak,
       bestStreak: this.bestStreak,
+      shots: this.shots,
+      hits: this.hits,
       weapon: this.weapon.ids[0],
       alive: this.alive,
       ping: this.ping,

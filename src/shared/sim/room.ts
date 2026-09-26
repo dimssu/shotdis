@@ -164,6 +164,18 @@ export class GameRoom implements BotWorldView {
       this.setPhase('countdown');
     }
     if (this.phase === 'countdown' || this.phase === 'live') this.spawn(p);
+    this.broadcast({ e: 'join', p: p.info() }, id);
+    this.ensureBots();
+    return p;
+  }
+
+  /**
+   * Send the welcome message to a player. Called by the host once the player's
+   * connection is registered with the transport (so the message can be routed).
+   */
+  welcome(id: number): void {
+    const p = this.players.get(id);
+    if (!p || p.bot) return;
     this.transport.send(id, {
       t: 'welcome',
       id,
@@ -173,10 +185,7 @@ export class GameRoom implements BotWorldView {
       you: p.youTuple(this.now, false),
       room: this.id,
     });
-    this.broadcast({ e: 'join', p: p.info() }, id);
-    this.ensureBots();
-    this.sendScores();
-    return p;
+    this.transport.send(id, { t: 'scores', p: this.sortedInfo() });
   }
 
   addBot(difficulty?: BotDifficulty): SimPlayer {

@@ -17,6 +17,8 @@ export interface PlayerInfo {
   score: number;
   streak: number;
   bestStreak: number;
+  shots: number;
+  hits: number;
   weapon: WeaponId;
   alive: boolean;
   ping: number;

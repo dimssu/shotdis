@@ -56,6 +56,7 @@ describe('game room', () => {
 
   it('welcomes a joining player and runs the match state machine', () => {
     const p = room.addHuman('Ace', 'rifle');
+    room.welcome(p.id);
     const welcome = sink.msgs.get(p.id)?.find((m) => m.t === 'welcome');
     expect(welcome?.t).toBe('welcome');
     expect(room.phase).toBe('countdown');
