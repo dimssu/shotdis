@@ -6,11 +6,12 @@ export function Scoreboard() {
   const myId = useStore((s) => s.myId);
   const map = useStore((s) => s.hud.mapName);
   const mode = useStore((s) => s.mode);
+  const room = useStore((s) => s.room);
   return (
     <div className="scoreboard" role="table" aria-label="Scoreboard">
       <h3>
         <span>{map || 'ARENA'}</span>
-        <span>{mode === 'practice' ? 'PRACTICE' : 'DEATHMATCH'}</span>
+        <span>{mode === 'practice' ? 'PRACTICE' : room ? `PRIVATE ROOM ${room.code}` : 'DEATHMATCH'}</span>
       </h3>
       <table className="sb-table">
         <thead>

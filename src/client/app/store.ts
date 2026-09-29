@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { MatchInfo, PlayerInfo } from '@shared/protocol';
+import { normalizeRoomCode } from '@shared/util/roomCode';
 import type { WeaponId } from '@shared/weapons';
 import { DEFAULT_SETTINGS, loadSettings, saveSettings, type Settings } from './settings';
 
@@ -91,7 +92,14 @@ export interface HudState {
   ping: number;
   fps: number;
   mapName: string;
+  mapId: string;
   lowHealth: boolean;
+}
+
+/** The private room the player is in (null for public matches and practice). */
+export interface RoomState {
+  code: string;
+  host: number;
 }
 
 interface State {
@@ -122,6 +130,9 @@ interface State {
   countdown: number | null;
   serverInfo: { ok: boolean; players: number; rooms: number } | null;
   toast: string | null;
+  room: RoomState | null;
+  /** Room code from an invite link (?room=CODE), until used or dismissed. */
+  inviteCode: string | null;
 
   setScreen(s: Screen): void;
   setMode(m: GameMode): void;
@@ -141,7 +152,16 @@ interface State {
   setResults(r: MatchResults | null): void;
   setCountdown(n: number | null): void;
   setToast(t: string | null): void;
+  clearInvite(): void;
   reset(): void;
+}
+
+function readInviteCode(): string | null {
+  try {
+    return normalizeRoomCode(new URLSearchParams(location.search).get('room') ?? '') || null;
+  } catch {
+    return null;
+  }
 }
 
 let nextId = 1;
@@ -171,6 +191,7 @@ const initialHud: HudState = {
   ping: 0,
   fps: 0,
   mapName: '',
+  mapId: '',
   lowHealth: false,
 };
 
@@ -204,6 +225,8 @@ export const useStore = create<State>((set, get) => ({
   countdown: null,
   serverInfo: null,
   toast: null,
+  room: null,
+  inviteCode: readInviteCode(),
 
   setScreen: (screen) => set({ screen }),
   setMode: (mode) => set({ mode }),
@@ -249,6 +272,16 @@ export const useStore = create<State>((set, get) => ({
   setResults: (results) => set({ results }),
   setCountdown: (countdown) => set({ countdown }),
   setToast: (toast) => set({ toast }),
+  clearInvite: () => {
+    try {
+      const url = new URL(location.href);
+      if (url.searchParams.has('room')) {
+        url.searchParams.delete('room');
+        history.replaceState(null, '', url.pathname + (url.search ? url.search : '') + url.hash);
+      }
+    } catch {}
+    set({ inviteCode: null });
+  },
   reset: () =>
     set({
       hud: { ...initialHud },
@@ -267,6 +300,7 @@ export const useStore = create<State>((set, get) => ({
       pointerLocked: false,
       connectError: null,
       reconnecting: false,
+      room: null,
     }),
 }));
 

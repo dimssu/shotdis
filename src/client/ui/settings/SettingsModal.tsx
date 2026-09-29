@@ -54,6 +54,17 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
               <Setting label="Damage numbers" sub="Show damage dealt above enemies.">
                 <Toggle label="Damage numbers" value={s.damageNumbers} onChange={(v) => update({ damageNumbers: v })} />
               </Setting>
+              <Setting label="Minimap" sub="Rotate keeps you centred facing up. Enemies show while in view or after they fire.">
+                <Segmented
+                  value={s.minimap}
+                  options={[
+                    { value: 'rotate', label: 'Rotate' },
+                    { value: 'fixed', label: 'Fixed' },
+                    { value: 'off', label: 'Off' },
+                  ]}
+                  onChange={(v) => update({ minimap: v })}
+                />
+              </Setting>
               <Setting label="Show FPS and ping">
                 <Toggle label="Show FPS" value={s.showFps} onChange={(v) => update({ showFps: v })} />
               </Setting>

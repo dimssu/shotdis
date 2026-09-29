@@ -2,7 +2,7 @@
  * Central gameplay configuration. Everything that tunes "feel" lives here so it is
  * easy to balance. Both client and server import this file.
  */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 export const SIM = {
   /** Fixed simulation rate (Hz) used by client prediction and server replay. */
@@ -76,6 +76,8 @@ export const MATCH = {
   MIN_PLAYERS: 1,
   ROOM_SIZE: 8,
   BOT_FILL: 4,
+  /** Most bots a private room host can add. */
+  MAX_PRIVATE_BOTS: 6,
 } as const;
 
 export const SCORE = {

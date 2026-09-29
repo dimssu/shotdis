@@ -24,6 +24,12 @@ export interface RoomOptions {
   botDifficulty?: BotDifficulty | 'mixed';
   /** Match length override in seconds (practice mode). */
   matchDuration?: number;
+  /** Private rooms start in warmup and only the host starts a match. */
+  isPrivate?: boolean;
+  /** Join code for private rooms. */
+  code?: string;
+  /** 'fill': bots top up empty slots (public rooms). 'fixed': exactly `botFill` bots (private rooms). */
+  botMode?: 'fill' | 'fixed';
 }
 
 const BOT_NAMES = ['Kestrel', 'Moth', 'Jackal', 'Sable', 'Quill', 'Ferro', 'Nyx', 'Pike', 'Dusk', 'Vex', 'Halo', 'Rook'];
@@ -36,6 +42,11 @@ const BOT_NAMES = ['Kestrel', 'Moth', 'Jackal', 'Sable', 'Quill', 'Ferro', 'Nyx'
  */
 export class GameRoom implements BotWorldView {
   readonly id: string;
+  readonly isPrivate: boolean;
+  readonly code: string;
+  /** Player id allowed to start matches in a private room (-1 when nobody is there). */
+  hostId = -1;
+  private botMode: 'fill' | 'fixed';
   readonly players = new Map<number, SimPlayer>();
   private brains = new Map<number, BotBrain>();
   map!: MapDef;
@@ -77,12 +88,22 @@ export class GameRoom implements BotWorldView {
     this.botDifficulty = opts.botDifficulty ?? 'mixed';
     this.matchDuration = opts.matchDuration ?? MATCH.DURATION_S;
     this.rng = new Rng(opts.seed ?? 12345);
+    this.isPrivate = opts.isPrivate ?? false;
+    this.code = opts.code ?? '';
+    this.botMode = opts.botMode ?? 'fill';
     this.mapIndex = opts.startMapIndex ?? 0;
     this.loadMap(this.mapIndex);
+    if (this.isPrivate) this.phase = 'warmup';
   }
 
+  /** True while players can move, shoot and take damage (warmup or a live match). */
   get live(): boolean {
-    return this.phase === 'live';
+    return this.phase === 'live' || this.phase === 'warmup';
+  }
+
+  /** Phases in which players are spawned into the arena. */
+  private get inArena(): boolean {
+    return this.phase === 'live' || this.phase === 'warmup' || this.phase === 'countdown';
   }
 
   /* ------------------------------------------------------------------ */
@@ -126,7 +147,7 @@ export class GameRoom implements BotWorldView {
   }
 
   matchInfo(): MatchInfo {
-    return { phase: this.phase, phaseEndsAt: Math.round(this.phaseEndsAt), map: this.map.id, round: this.round };
+    return { phase: this.phase, phaseEndsAt: Math.round(this.phaseEndsAt), map: this.map.id, round: this.round, code: this.code, host: this.hostId };
   }
 
   private pickColor(): number {
@@ -161,10 +182,9 @@ export class GameRoom implements BotWorldView {
     p.lastInputWall = this.now;
     this.players.set(id, p);
     this.adsHeld.set(id, false);
-    if (this.phase === 'waiting') {
-      this.setPhase('countdown');
-    }
-    if (this.phase === 'countdown' || this.phase === 'live') this.spawn(p);
+    if (this.isPrivate && this.hostId === -1) this.hostId = id;
+    if (this.phase === 'waiting') this.setPhase('countdown'); // spawns everyone, including this player
+    else if (this.inArena) this.spawn(p);
     this.broadcast({ e: 'join', p: p.info() }, id);
     this.ensureBots();
     return p;
@@ -227,7 +247,7 @@ export class GameRoom implements BotWorldView {
       difficulty ?? (this.botDifficulty === 'mixed' ? this.rng.pick(['easy', 'normal', 'normal', 'hard'] as const) : this.botDifficulty);
     this.brains.set(id, new BotBrain(p, diff, new Rng(this.rng.int(1, 1e9))));
     this.adsHeld.set(id, false);
-    if (this.phase === 'countdown' || this.phase === 'live') this.spawn(p);
+    if (this.inArena) this.spawn(p);
     this.broadcast({ e: 'join', p: p.info() });
     return p;
   }
@@ -241,14 +261,24 @@ export class GameRoom implements BotWorldView {
     this.adsHeld.delete(id);
     this.broadcast({ e: 'leave', id });
     if (!p.bot) {
+      if (id === this.hostId) this.assignHost();
       this.ensureBots();
       if (this.humanCount() === 0) this.idleSince = this.now;
     }
   }
 
+  /** Hand the host role to the longest-present human (or nobody). */
+  private assignHost(): void {
+    let next: SimPlayer | null = null;
+    for (const q of this.players.values()) if (!q.bot && (!next || q.joinedAt < next.joinedAt)) next = q;
+    this.hostId = next ? next.id : -1;
+    this.broadcast({ e: 'host', id: this.hostId });
+  }
+
   private ensureBots(): void {
     const humans = this.humanCount();
-    const desired = clamp(this.botFill - Math.max(0, humans - 1), 0, Math.max(0, this.roomSize - humans));
+    const cap = Math.max(0, this.roomSize - humans);
+    const desired = this.botMode === 'fixed' ? clamp(this.botFill, 0, cap) : clamp(this.botFill - Math.max(0, humans - 1), 0, cap);
     let bots = this.botCount();
     while (bots < desired) {
       this.addBot();
@@ -295,6 +325,16 @@ export class GameRoom implements BotWorldView {
         if (WEAPONS[msg.weapon].slot === 'primary') p.pendingPrimary = msg.weapon;
         break;
       }
+      case 'start': {
+        // Only the host of a private room can start, and only from warmup.
+        if (!this.isPrivate || id !== this.hostId || this.phase !== 'warmup') break;
+        if (msg.map) {
+          const idx = this.maps.findIndex((m) => m.id === msg.map);
+          if (idx >= 0 && idx !== this.mapIndex) this.loadMap(idx);
+        }
+        this.setPhase('countdown');
+        break;
+      }
       case 'join':
         break;
     }
@@ -315,7 +355,7 @@ export class GameRoom implements BotWorldView {
     for (const p of this.players.values()) {
       if (p.bot) this.updateBot(p, dt);
       else this.processInputs(p);
-      if (!p.alive && p.respawnAt > 0 && now >= p.respawnAt && (this.phase === 'live' || this.phase === 'countdown')) {
+      if (!p.alive && p.respawnAt > 0 && now >= p.respawnAt && this.inArena) {
         this.spawn(p);
       }
     }
@@ -335,7 +375,7 @@ export class GameRoom implements BotWorldView {
   }
 
   private updatePhase(): void {
-    if (this.phase === 'waiting') return;
+    if (this.phase === 'waiting' || this.phase === 'warmup') return;
     if (this.now < this.phaseEndsAt) return;
     switch (this.phase) {
       case 'countdown':
@@ -347,7 +387,8 @@ export class GameRoom implements BotWorldView {
       case 'ended':
         this.loadMap(this.mapIndex + 1);
         for (const b of this.brains.values()) b.reset();
-        if (this.humanCount() > 0) this.setPhase('countdown');
+        if (this.isPrivate) this.setPhase('warmup');
+        else if (this.humanCount() > 0) this.setPhase('countdown');
         else this.setPhase('waiting');
         break;
     }
@@ -359,6 +400,13 @@ export class GameRoom implements BotWorldView {
     switch (phase) {
       case 'waiting':
         this.phaseEndsAt = 0;
+        break;
+      case 'warmup':
+        this.phaseEndsAt = 0;
+        for (const p of this.players.values()) {
+          p.resetStats();
+          this.spawn(p);
+        }
         break;
       case 'countdown':
         this.round++;
@@ -425,14 +473,14 @@ export class GameRoom implements BotWorldView {
     p.yaw = yaw;
     p.pitch = pitch;
     p.renderTime = rt;
-    const canAct = p.alive && this.phase === 'live';
+    const canAct = p.alive && this.live;
     const keys = canAct ? rawKeys : 0;
     this.adsHeld.set(p.id, (keys & Keys.ADS) !== 0);
     const def = WEAPONS[p.currentWeapon];
     const bloomBefore = p.weapon.bloom;
     if (p.alive) {
       stepPlayer(p.move, keys, yaw, dt, this.world, def.moveSpeedMult);
-      if (p.move.landedSpeed > COMBAT.FALL_DAMAGE_MIN_SPEED && this.phase === 'live') {
+      if (p.move.landedSpeed > COMBAT.FALL_DAMAGE_MIN_SPEED && this.live) {
         const dmg = (p.move.landedSpeed - COMBAT.FALL_DAMAGE_MIN_SPEED) * COMBAT.FALL_DAMAGE_PER_SPEED;
         this.damage(p, p, dmg, false, 'fall');
       }
@@ -564,7 +612,7 @@ export class GameRoom implements BotWorldView {
 
   /** Apply damage. */
   private damage(victim: SimPlayer, attacker: SimPlayer, dmg: number, hs: boolean, weapon: WeaponId | 'fall'): 'ignored' | 'blocked' | 'applied' | 'killed' {
-    if (!victim.alive || this.phase !== 'live') return 'ignored';
+    if (!victim.alive || !this.live) return 'ignored';
     if (victim.protectedUntil > this.now && attacker !== victim) return 'blocked';
     const r = applyDamage(victim.hp, victim.armor, dmg);
     victim.hp = r.hp;
@@ -593,25 +641,28 @@ export class GameRoom implements BotWorldView {
     if (!victim.alive) return;
     victim.alive = false;
     victim.hp = 0;
-    victim.deaths++;
-    victim.streak = 0;
     victim.respawnAt = this.now + COMBAT.RESPAWN_DELAY * 1000;
     victim.move.vel.x = 0;
     victim.move.vel.z = 0;
     let streak = 0;
     let milestone = 0;
-    if (killer && killer !== victim) {
-      killer.kills++;
-      killer.streak++;
-      streak = killer.streak;
-      if (killer.streak > killer.bestStreak) killer.bestStreak = killer.streak;
-      killer.score += SCORE.KILL + (hs ? SCORE.HEADSHOT_BONUS : 0);
-      if (SCORE.STREAK_MILESTONES.includes(killer.streak)) {
-        milestone = killer.streak;
-        killer.score += SCORE.STREAK_BONUS * killer.streak;
+    // Warmup kills show in the feed but never touch the scoreboard.
+    if (this.phase === 'live') {
+      victim.deaths++;
+      victim.streak = 0;
+      if (killer && killer !== victim) {
+        killer.kills++;
+        killer.streak++;
+        streak = killer.streak;
+        if (killer.streak > killer.bestStreak) killer.bestStreak = killer.streak;
+        killer.score += SCORE.KILL + (hs ? SCORE.HEADSHOT_BONUS : 0);
+        if (SCORE.STREAK_MILESTONES.includes(killer.streak)) {
+          milestone = killer.streak;
+          killer.score += SCORE.STREAK_BONUS * killer.streak;
+        }
+      } else {
+        victim.score = Math.max(0, victim.score - 25);
       }
-    } else {
-      victim.score = Math.max(0, victim.score - 25);
     }
     this.broadcast({ e: 'kill', k: killer ? killer.id : -1, v: victim.id, w: weapon, hs, streak, milestone });
   }

@@ -1,11 +1,13 @@
-import { NET, PROTOCOL_VERSION, SIM } from './config';
+import { MATCH, NET, PROTOCOL_VERSION, SIM } from './config';
+import { normalizeRoomCode } from './util/roomCode';
 import { isWeaponId, WEAPONS, type WeaponId } from './weapons';
 
 /* ------------------------------------------------------------------ */
 /* Shared data shapes                                                  */
 /* ------------------------------------------------------------------ */
 
-export type MatchPhase = 'waiting' | 'countdown' | 'live' | 'ended';
+/** `warmup` only exists in private rooms: everyone can play, nothing is scored, the host starts the match. */
+export type MatchPhase = 'waiting' | 'warmup' | 'countdown' | 'live' | 'ended';
 
 export interface PlayerInfo {
   id: number;
@@ -30,7 +32,14 @@ export interface MatchInfo {
   phaseEndsAt: number;
   map: string;
   round: number;
+  /** Private room code, or '' for public rooms. */
+  code: string;
+  /** Player id of the private room host, or -1. */
+  host: number;
 }
+
+/** How a player wants to enter a room: create a private one, join one by code, or (absent) matchmake. */
+export type JoinRoom = { create: true; bots: number } | { code: string };
 
 /** [seq, dt, keys, yaw, pitch, renderTime] — renderTime is the server time (ms) the client was rendering remote players at. */
 export type InputTuple = [number, number, number, number, number, number];
@@ -82,15 +91,17 @@ export type GameEvent =
   | { e: 'reload'; id: number }
   | { e: 'switch'; id: number; w: WeaponId }
   | { e: 'match'; m: MatchInfo; results?: PlayerInfo[] }
-  | { e: 'streak'; id: number; n: number };
+  | { e: 'streak'; id: number; n: number }
+  | { e: 'host'; id: number };
 
 /* ------------------------------------------------------------------ */
 /* Messages                                                            */
 /* ------------------------------------------------------------------ */
 
 export type ClientMsg =
-  | { t: 'join'; name: string; weapon: WeaponId; v: number; token?: string }
+  | { t: 'join'; name: string; weapon: WeaponId; v: number; token?: string; room?: JoinRoom }
   | { t: 'in'; f: InputTuple[] }
+  | { t: 'start'; map?: string }
   | { t: 'ping'; c: number; rtt: number }
   | { t: 'loadout'; weapon: WeaponId };
 
@@ -142,7 +153,20 @@ export function parseClientMessage(raw: unknown): ClientMsg | null {
       if (!isWeaponId(weapon) || WEAPONS[weapon].slot !== 'primary') return null;
       if (!isFinite_(m.v)) return null;
       if (m.token !== undefined && (typeof m.token !== 'string' || m.token.length > 64)) return null;
-      return { t: 'join', name: m.name, weapon, v: m.v, token: typeof m.token === 'string' ? m.token : undefined };
+      let room: JoinRoom | undefined;
+      if (m.room !== undefined) {
+        if (!m.room || typeof m.room !== 'object') return null;
+        if (m.room.create === true) {
+          const bots: unknown = m.room.bots;
+          if (!isFinite_(bots) || bots < 0 || bots > MATCH.MAX_PRIVATE_BOTS || Math.floor(bots) !== bots) return null;
+          room = { create: true, bots };
+        } else {
+          const code = normalizeRoomCode(m.room.code);
+          if (!code) return null;
+          room = { code };
+        }
+      }
+      return { t: 'join', name: m.name, weapon, v: m.v, token: typeof m.token === 'string' ? m.token : undefined, room };
     }
     case 'in': {
       if (!Array.isArray(m.f) || m.f.length === 0 || m.f.length > NET.MAX_INPUTS_PER_MSG) return null;
@@ -153,6 +177,10 @@ export function parseClientMessage(raw: unknown): ClientMsg | null {
       if (!isFinite_(m.c)) return null;
       const rtt = isFinite_(m.rtt) ? Math.max(0, Math.min(5000, m.rtt)) : 0;
       return { t: 'ping', c: m.c, rtt };
+    }
+    case 'start': {
+      if (m.map !== undefined && (typeof m.map !== 'string' || m.map.length > 32)) return null;
+      return { t: 'start', map: m.map };
     }
     case 'loadout': {
       if (!isWeaponId(m.weapon)) return null;

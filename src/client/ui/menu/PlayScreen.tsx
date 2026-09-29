@@ -1,4 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import type { JoinRoom } from '@shared/protocol';
+import { normalizeRoomCode, ROOM_CODE_LENGTH } from '@shared/util/roomCode';
 import { PRIMARY_WEAPONS, WEAPONS, type WeaponId } from '@shared/weapons';
 import { MAPS } from '@shared/maps';
 import { useStore } from '@client/app/store';
@@ -19,7 +21,61 @@ function statPct(w: WeaponId, key: 'damage' | 'rate' | 'range' | 'mobility'): nu
   }
 }
 
-export function PlayScreen({ onStart }: { onStart: (mode: 'online' | 'practice') => void }) {
+function FriendsCard({ online, onStart }: { online: boolean; onStart: (room: JoinRoom) => void }) {
+  const inviteCode = useStore((s) => s.inviteCode);
+  const [bots, setBots] = useState(0);
+  const [code, setCode] = useState(inviteCode ?? '');
+  const [error, setError] = useState('');
+  const join = () => {
+    const c = normalizeRoomCode(code);
+    if (!c) {
+      setError(`Room codes are ${ROOM_CODE_LENGTH} letters and numbers, like K7QXP.`);
+      return;
+    }
+    setError('');
+    onStart({ code: c });
+  };
+  return (
+    <div className="mode-card">
+      <h3>Play with friends</h3>
+      <p>Create a private room and share the code. Everyone warms up until you start the match.</p>
+      <div className="row">
+        <span className="hint">Bots</span>
+        <Segmented value={String(bots)} options={[0, 1, 2, 4].map((n) => ({ value: String(n), label: n === 0 ? 'None' : String(n) }))} onChange={(v) => setBots(Number(v))} />
+      </div>
+      <Button className="primary" disabled={!online} onClick={() => onStart({ create: true, bots })}>
+        Create room
+      </Button>
+      <form
+        className="join-row"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (online) join();
+        }}
+      >
+        <input
+          className={`input code-input ${error ? 'invalid' : ''}`}
+          value={code}
+          maxLength={8}
+          placeholder="CODE"
+          aria-label="Room code"
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(e) => {
+            setCode(e.target.value.toUpperCase());
+            setError('');
+          }}
+        />
+        <Button disabled={!online || code.trim().length === 0} onClick={join}>
+          Join
+        </Button>
+      </form>
+      {error && <span className="hint error">{error}</span>}
+    </div>
+  );
+}
+
+export function PlayScreen({ onStart }: { onStart: (mode: 'online' | 'practice', room?: JoinRoom) => void }) {
   const settings = useStore((s) => s.settings);
   const update = useStore((s) => s.updateSettings);
   const setScreen = useStore((s) => s.setScreen);
@@ -89,6 +145,7 @@ export function PlayScreen({ onStart }: { onStart: (mode: 'online' | 'practice')
                 Find match
               </Button>
             </div>
+            <FriendsCard online={online} onStart={(room) => onStart('online', room)} />
             <div className="mode-card">
               <h3>Practice</h3>
               <p>Play offline against bots. Runs the full match locally, no connection needed.</p>

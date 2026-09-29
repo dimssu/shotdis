@@ -7,6 +7,7 @@ export function ResultsScreen({ onPlayAgain, onLeave }: { onPlayAgain: () => voi
   const results = useStore((s) => s.results);
   const myId = useStore((s) => s.myId);
   const offset = useStore((s) => s.hud.serverOffset);
+  const room = useStore((s) => s.room);
   const [now, setNow] = useState(performance.now());
   useEffect(() => {
     const t = setInterval(() => setNow(performance.now()), 250);
@@ -26,7 +27,7 @@ export function ResultsScreen({ onPlayAgain, onLeave }: { onPlayAgain: () => voi
             <b style={{ color: winner ? `#${winner.color.toString(16).padStart(6, '0')}` : undefined }}>{winner ? winner.name : '—'}</b>
           </div>
           <div className="hint" style={{ fontFamily: 'var(--mono)' }}>
-            NEXT MATCH IN {next}s
+            {room ? 'BACK TO WARMUP' : 'NEXT MATCH'} IN {next}s
           </div>
         </div>
         {me && (

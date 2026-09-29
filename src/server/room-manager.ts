@@ -1,4 +1,6 @@
+import { randomInt } from 'node:crypto';
 import { MAPS } from '../shared/maps';
+import { generateRoomCode, normalizeRoomCode } from '../shared/util/roomCode';
 import type { ServerMsg } from '../shared/protocol';
 import { GameRoom } from '../shared/sim/room';
 import type { RoomTransport } from '../shared/sim/transport';
@@ -12,6 +14,8 @@ export interface RoomManagerOptions {
   roomSize: number;
   botFill: number;
   idleTimeoutMs: number;
+  /** Private rooms survive a little longer without players, so a group can regroup. */
+  privateIdleTimeoutMs?: number;
   maxRooms?: number;
   now: () => number;
 }
@@ -24,6 +28,7 @@ export interface RoomManagerOptions {
 export class RoomManager {
   readonly rooms = new Map<string, GameRoom>();
   private links = new Map<string, Map<number, ClientLink>>();
+  private codes = new Map<string, GameRoom>();
   private nextRoom = 1;
   private timer: ReturnType<typeof setInterval> | null = null;
 
@@ -43,9 +48,11 @@ export class RoomManager {
     const now = this.opts.now();
     for (const [id, room] of this.rooms) {
       room.update(now);
-      if (room.humanCount() === 0 && room.idleMs() > this.opts.idleTimeoutMs) {
+      const limit = room.isPrivate ? (this.opts.privateIdleTimeoutMs ?? 120_000) : this.opts.idleTimeoutMs;
+      if (room.humanCount() === 0 && room.idleMs() > limit) {
         this.rooms.delete(id);
         this.links.delete(id);
+        if (room.isPrivate) this.codes.delete(room.code);
       }
     }
   }
@@ -54,7 +61,7 @@ export class RoomManager {
   findRoom(): GameRoom | null {
     let best: GameRoom | null = null;
     for (const room of this.rooms.values()) {
-      if (!room.hasRoomForHuman()) continue;
+      if (room.isPrivate || !room.hasRoomForHuman()) continue;
       if (!best || room.humanCount() > best.humanCount()) best = room;
     }
     if (best) return best;
@@ -62,7 +69,27 @@ export class RoomManager {
     return this.createRoom();
   }
 
-  createRoom(): GameRoom {
+  /** Create a private room with its own join code. Returns null when the room cap is reached. */
+  createPrivateRoom(bots: number): GameRoom | null {
+    if (this.rooms.size >= (this.opts.maxRooms ?? 48)) return null;
+    let code = '';
+    for (let i = 0; i < 20 && !code; i++) {
+      const c = generateRoomCode(randomInt);
+      if (!this.codes.has(c)) code = c;
+    }
+    if (!code) return null;
+    const room = this.createRoom({ isPrivate: true, code, bots });
+    this.codes.set(code, room);
+    return room;
+  }
+
+  /** Look up a private room by its code (case and spacing do not matter). */
+  getPrivateRoom(code: string): GameRoom | undefined {
+    const c = normalizeRoomCode(code);
+    return c ? this.codes.get(c) : undefined;
+  }
+
+  createRoom(priv?: { isPrivate: true; code: string; bots: number }): GameRoom {
     const id = `room-${this.nextRoom++}`;
     const links = new Map<number, ClientLink>();
     this.links.set(id, links);
@@ -75,7 +102,10 @@ export class RoomManager {
       maps: MAPS,
       transport,
       roomSize: this.opts.roomSize,
-      botFill: this.opts.botFill,
+      botFill: priv ? Math.max(0, Math.min(priv.bots, this.opts.roomSize - 1)) : this.opts.botFill,
+      botMode: priv ? 'fixed' : 'fill',
+      isPrivate: priv?.isPrivate ?? false,
+      code: priv?.code ?? '',
       seed: (Math.random() * 1e9) >>> 0,
       startMapIndex: (this.nextRoom - 2) % MAPS.length,
     });
@@ -93,13 +123,13 @@ export class RoomManager {
     room.removePlayer(playerId);
   }
 
-  stats(): { rooms: number; players: number; bots: number } {
+  stats(): { rooms: number; privateRooms: number; players: number; bots: number } {
     let players = 0;
     let bots = 0;
     for (const r of this.rooms.values()) {
       players += r.humanCount();
       bots += r.botCount();
     }
-    return { rooms: this.rooms.size, players, bots };
+    return { rooms: this.rooms.size, privateRooms: this.codes.size, players, bots };
   }
 }

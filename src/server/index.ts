@@ -106,6 +106,12 @@ function terminate(session: Session, reason: string): void {
   setTimeout(() => session.ws.terminate(), 250).unref();
 }
 
+/** Refuse a join with a reason the client can show, then drop the socket. */
+function reject(session: Session, code: string, msg: string): void {
+  send(session, { t: 'err', code, msg });
+  terminate(session, code);
+}
+
 /** Player left for good: free their slot and token. */
 function dropPlayer(entry: TokenEntry, token: string): void {
   if (entry.timer) clearTimeout(entry.timer);
@@ -191,10 +197,24 @@ wss.on('connection', (ws, req) => {
       }
 
       const name = sanitizeName(msg.name) || randomName();
-      const room = manager.findRoom();
+      let room: GameRoom | null | undefined;
+      if (msg.room && 'create' in msg.room) {
+        room = manager.createPrivateRoom(msg.room.bots);
+      } else if (msg.room && 'code' in msg.room) {
+        room = manager.getPrivateRoom(msg.room.code);
+        if (!room) {
+          reject(session, 'room_not_found', `Room ${msg.room.code} doesn't exist or has already closed. Check the code with your friend.`);
+          return;
+        }
+        if (!room.hasRoomForHuman()) {
+          reject(session, 'room_full', `Room ${msg.room.code} is full.`);
+          return;
+        }
+      } else {
+        room = manager.findRoom();
+      }
       if (!room) {
-        send(session, { t: 'err', code: 'full', msg: 'All rooms are full right now. Try again in a moment.' });
-        terminate(session, 'Server full');
+        reject(session, 'full', 'All rooms are full right now. Try again in a moment.');
         return;
       }
       const player = room.addHuman(name, msg.weapon);
@@ -205,14 +225,14 @@ wss.on('connection', (ws, req) => {
       tokens.set(token, { room, playerId: player.id, session, expiresAt: 0, timer: null });
       manager.attach(room, player.id, link);
       room.welcome(player.id, token);
-      console.log(`[join] ${name} (#${player.id}) -> ${room.id} from ${ip}`);
+      console.log(`[join] ${name} (#${player.id}) -> ${room.id}${room.isPrivate ? ` (private ${room.code})` : ''} from ${ip}`);
       return;
     }
     if (msg.t === 'join') return;
     session.room.handleMessage(session.playerId, msg);
   });
 
-  ws.on('close', () => {
+  ws.on('close', (code) => {
     sessions.delete(ws);
     const n = (ipCounts.get(ip) ?? 1) - 1;
     if (n <= 0) ipCounts.delete(ip);
@@ -223,7 +243,13 @@ wss.on('connection', (ws, req) => {
     session.room = null;
     const entry = tokens.get(session.token);
     if (!entry || entry.session !== session) return;
-    // Keep the player's slot briefly so a quick reconnect can reclaim it.
+    // 1000 = the player left on purpose, 1001 = tab closed or page navigated away: remove them now.
+    if (code === 1000 || code === 1001) {
+      console.log(`[leave] #${session.playerId} from ${room.id}`);
+      dropPlayer(entry, session.token);
+      return;
+    }
+    // Anything else is a dropped connection: keep the slot briefly so a quick reconnect can reclaim it.
     entry.session = null;
     room.markDisconnected(session.playerId);
     console.log(`[drop] #${session.playerId} from ${room.id} (rejoin window ${REJOIN_GRACE_MS / 1000}s)`);

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MAPS } from '@shared/maps';
+import type { JoinRoom } from '@shared/protocol';
 import { Game } from '@client/game/Game';
 import { LoopbackTransport, WsTransport, type Transport } from '@client/game/net/Transport';
 import { audio } from '@client/game/audio/AudioManager';
@@ -18,6 +19,8 @@ import { SERVER_URL } from './serverStatus';
 import { useStore, type GameMode } from './store';
 
 let pendingTransport: Transport | null = null;
+/** Private room to create or join with the pending connection. */
+let pendingRoom: JoinRoom | undefined;
 let connectAttempt = 0;
 let activeConnect: WsTransport | null = null;
 
@@ -45,7 +48,9 @@ function GameView({ onLeave }: { onLeave: (reason?: string) => void }) {
   useEffect(() => {
     const canvas = canvasRef.current;
     const transport = pendingTransport;
+    const room = pendingRoom;
     pendingTransport = null;
+    pendingRoom = undefined;
     if (!canvas || !transport) {
       onLeave();
       return;
@@ -58,6 +63,7 @@ function GameView({ onLeave }: { onLeave: (reason?: string) => void }) {
         name: settings.name,
         weapon: settings.weapon,
         serverUrl: transport.kind === 'online' ? SERVER_URL : undefined,
+        room: transport.kind === 'online' ? room : undefined,
         onLeave: (reason) => onLeave(reason),
         onProgress: (label, value) => useStore.setState({ loadingLabel: label, loadingProgress: value }),
       });
@@ -123,6 +129,11 @@ function GameView({ onLeave }: { onLeave: (reason?: string) => void }) {
                 lock();
               }}
               onLeave={() => onLeave()}
+              onStartMatch={(mapId) => {
+                gameRef.current?.startMatch(mapId);
+                useStore.setState({ paused: false });
+                lock();
+              }}
             />
           )}
         </>
@@ -160,15 +171,17 @@ export function App() {
     audio.startMusic('menu');
   }, []);
 
-  const startMatch = useCallback(async (mode: GameMode) => {
+  const startMatch = useCallback(async (mode: GameMode, room?: JoinRoom) => {
     const st = useStore.getState();
     st.reset();
     st.setMode(mode);
     audio.init();
     audio.stopMusic(0.5);
+    if (room && 'code' in room && st.inviteCode === room.code) st.clearInvite();
     if (mode === 'online') {
       st.setScreen('connecting');
-      useStore.setState({ connectStatus: 'Reaching the game server', connectError: null });
+      const status = !room ? 'Reaching the game server' : 'create' in room ? 'Creating your private room' : `Joining room ${room.code}`;
+      useStore.setState({ connectStatus: status, connectError: null });
       const attempt = ++connectAttempt;
       activeConnect?.close();
       const ws = new WsTransport();
@@ -187,6 +200,7 @@ export function App() {
       }
       activeConnect = null;
       pendingTransport = ws;
+      pendingRoom = room;
     } else {
       const s = st.settings;
       pendingTransport = new LoopbackTransport({
@@ -204,8 +218,8 @@ export function App() {
   return (
     <>
       {(screen === 'menu' || screen === 'play') && <MenuBackground />}
-      {screen === 'menu' && <MainMenu />}
-      {screen === 'play' && <PlayScreen onStart={(m) => void startMatch(m)} />}
+      {screen === 'menu' && <MainMenu onJoinRoom={(code) => void startMatch('online', { code })} />}
+      {screen === 'play' && <PlayScreen onStart={(m, room) => void startMatch(m, room)} />}
       {screen === 'connecting' && (
         <ConnectingScreen
           onCancel={() => {

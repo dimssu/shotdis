@@ -5,13 +5,16 @@ import { audio } from '@client/game/audio/AudioManager';
 import { Button } from '../common/Controls';
 import { NamePrompt } from './NamePrompt';
 
-export function MainMenu() {
+export function MainMenu({ onJoinRoom }: { onJoinRoom: (code: string) => void }) {
   const firstLaunch = useStore((s) => s.firstLaunch);
   const name = useStore((s) => s.settings.name);
   const setScreen = useStore((s) => s.setScreen);
   const setOverlay = useStore((s) => s.setOverlay);
   const serverInfo = useStore((s) => s.serverInfo);
+  const inviteCode = useStore((s) => s.inviteCode);
+  const clearInvite = useStore((s) => s.clearInvite);
   const [askName, setAskName] = useState(firstLaunch);
+  const [joinAfterName, setJoinAfterName] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -45,6 +48,16 @@ export function MainMenu() {
     };
   }, []);
 
+  const joinInvite = () => {
+    if (!inviteCode) return;
+    if (!name) {
+      setJoinAfterName(true);
+      setAskName(true);
+      return;
+    }
+    onJoinRoom(inviteCode);
+  };
+
   const play = () => {
     if (!name) {
       setAskName(true);
@@ -70,8 +83,22 @@ export function MainMenu() {
               </button>
             </div>
           </div>
+          {inviteCode && (
+            <div className="invite-card" role="region" aria-label="Room invite">
+              <span className="label">You are invited</span>
+              <b>ROOM {inviteCode}</b>
+              <div className="row">
+                <Button className="primary" onClick={joinInvite} disabled={!SERVER_URL} autoFocus>
+                  Join room
+                </Button>
+                <Button className="ghost small" onClick={clearInvite}>
+                  Not now
+                </Button>
+              </div>
+            </div>
+          )}
           <div className="menu-nav">
-            <Button className="primary" onClick={play} autoFocus>
+            <Button className={inviteCode ? '' : 'primary'} onClick={play} autoFocus={!inviteCode}>
               Play
             </Button>
             <Button onClick={() => setOverlay('settings')}>Settings</Button>
@@ -87,7 +114,15 @@ export function MainMenu() {
           </div>
         </div>
       </div>
-      {askName && <NamePrompt onDone={() => setAskName(false)} />}
+      {askName && (
+        <NamePrompt
+          onDone={() => {
+            setAskName(false);
+            if (joinAfterName && inviteCode) onJoinRoom(inviteCode);
+            setJoinAfterName(false);
+          }}
+        />
+      )}
     </>
   );
 }

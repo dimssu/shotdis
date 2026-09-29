@@ -5,7 +5,7 @@ import type { MapDef } from '@shared/maps/types';
 import { dirFromYawPitch, v3 } from '@shared/math';
 import { Keys, eyeHeight, horizontalSpeed, playerHeight } from '@shared/physics/movement';
 import { CollisionWorld, newRayHit, rayAABB, raySphere } from '@shared/physics/world';
-import type { GameEvent, InputTuple, MatchInfo, PlayerInfo, ServerMsg } from '@shared/protocol';
+import type { GameEvent, InputTuple, JoinRoom, MatchInfo, PlayerInfo, ServerMsg } from '@shared/protocol';
 import { isReloading, type WeaponStepResult } from '@shared/sim/weapon-state';
 import { WEAPONS, fireInterval, spreadDegrees, type WeaponId } from '@shared/weapons';
 import { useStore } from '@client/app/store';
@@ -13,6 +13,7 @@ import type { Settings } from '@client/app/settings';
 import { audio } from './audio/AudioManager';
 import { CameraRig } from './camera/CameraRig';
 import { CasingPool, FlashLight, SparkPool, TracerPool } from './effects/Effects';
+import { minimap, type Blip } from './hud/Minimap';
 import { InputManager } from './input/InputManager';
 import { ServerClock } from './net/Clock';
 import { WsTransport, type Transport } from './net/Transport';
@@ -30,6 +31,8 @@ export interface GameOptions {
   weapon: WeaponId;
   /** WebSocket URL for reconnects (online mode only). */
   serverUrl?: string;
+  /** Create or join a private room instead of matchmaking. */
+  room?: JoinRoom;
   onLeave(reason?: string): void;
   onProgress(label: string, value: number): void;
 }
@@ -40,6 +43,18 @@ const tmpV2 = new THREE.Vector3();
 const tmpDir = v3();
 const tmpRay = newRayHit();
 const UP = new THREE.Vector3(0, 1, 0);
+const losFrom = v3();
+const losTo = v3();
+
+/** A join the server refused (bad room code, full, outdated client). Retrying will not help. */
+class JoinError extends Error {
+  constructor(
+    message: string,
+    readonly fatal: boolean,
+  ) {
+    super(message);
+  }
+}
 
 /**
  * The running match: rendering, input, prediction, networking and feedback.
@@ -67,7 +82,7 @@ export class Game {
   private casings = new CasingPool(40);
   private remoteFlash = new FlashLight();
   private localFlash = new FlashLight();
-  private match: MatchInfo = { phase: 'waiting', phaseEndsAt: 0, map: 'warehouse', round: 0 };
+  private match: MatchInfo = { phase: 'waiting', phaseEndsAt: 0, map: 'warehouse', round: 0, code: '', host: -1 };
   private raf = 0;
   private running = false;
   private lastFrame = 0;
@@ -95,6 +110,14 @@ export class Game {
   private rejoinToken = '';
   private joinSentAt = 0;
   private lastYou: number[] | null = null;
+  /** Private room code once joined, so a reconnect goes back to the same room. */
+  private roomCode = '';
+  /** Minimap: when each enemy was last in view / last fired (ms). */
+  private seenUntil = new Map<number, number>();
+  private firedAt = new Map<number, number>();
+  private lastLos = 0;
+  private minimapTimer = 0;
+  private blips: Blip[] = [];
   private rebuildTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(opts: GameOptions) {
@@ -157,7 +180,7 @@ export class Game {
     p('Joining match', 0.25);
     this.local.resetForJoin();
     this.joinSentAt = performance.now();
-    this.transport.send({ t: 'join', name: this.opts.name, weapon: this.opts.weapon, v: PROTOCOL_VERSION });
+    this.transport.send({ t: 'join', name: this.opts.name, weapon: this.opts.weapon, v: PROTOCOL_VERSION, room: this.opts.room });
     await this.waitForWelcome();
     p(`Building ${this.map.name.toLowerCase()}`, 0.55);
     await nextFrame();
@@ -238,15 +261,28 @@ export class Game {
       this.myInfo = null;
       this.inputBatch = [];
       this.joinSentAt = performance.now();
-      ws.send({ t: 'join', name: this.opts.name, weapon: useStore.getState().settings.weapon, v: PROTOCOL_VERSION, token: this.rejoinToken || undefined });
+      ws.send({
+        t: 'join',
+        name: this.opts.name,
+        weapon: useStore.getState().settings.weapon,
+        v: PROTOCOL_VERSION,
+        token: this.rejoinToken || undefined,
+        room: this.roomCode ? { code: this.roomCode } : undefined,
+      });
       try {
         await this.waitForWelcome();
         this.reconnecting = false;
         useStore.setState({ reconnecting: false });
         useStore.getState().setToast('Reconnected');
         return;
-      } catch {
+      } catch (e) {
         ws.close();
+        if (e instanceof JoinError && e.fatal) {
+          this.reconnecting = false;
+          useStore.setState({ reconnecting: false });
+          this.opts.onLeave(e.message);
+          return;
+        }
       }
     }
     this.reconnecting = false;
@@ -368,7 +404,8 @@ export class Game {
     for (const r of this.remotes.values()) r.model.setShadows(shadows);
     // Pending inputs may have been replayed against the old collision world; redo it against the new one.
     if (this.lastYou) this.local.reconcile(this.lastYou, this.local.lastAck);
-    useStore.getState().setHud({ mapName: map.name });
+    minimap.setMap(map);
+    useStore.getState().setHud({ mapName: map.name, mapId: map.id });
   }
 
   /* ------------------------------------------------------------------ */
@@ -392,10 +429,17 @@ export class Game {
       case 'scores':
         this.onScores(m.p);
         break;
-      case 'err':
+      case 'err': {
+        const fatal = m.code === 'version' || m.code === 'room_not_found' || m.code === 'room_full' || m.code === 'full';
+        if (this.welcomeReject) {
+          // The join was refused: surface the server's explanation on the loading screen.
+          this.welcomeReject(new JoinError(m.msg, fatal));
+          break;
+        }
         if (m.code === 'version') this.opts.onLeave(m.msg);
         else useStore.getState().setToast(m.msg);
         break;
+      }
     }
   }
 
@@ -405,6 +449,8 @@ export class Game {
     const now = performance.now();
     this.clock.seed(m.st, now, this.joinSentAt > 0 ? Math.max(0, now - this.joinSentAt) : 0);
     this.match = m.match;
+    this.local.live = m.match.phase === 'live' || m.match.phase === 'warmup';
+    this.applyRoomInfo(m.match);
     this.wasLive = m.match.phase === 'live';
     useStore.setState({ myId: m.id });
     for (const p of m.players) this.addPlayer(p);
@@ -456,6 +502,8 @@ export class Game {
 
   private removePlayer(id: number): void {
     this.players.delete(id);
+    this.seenUntil.delete(id);
+    this.firedAt.delete(id);
     const r = this.remotes.get(id);
     if (r) {
       this.scene.remove(r.model.group);
@@ -467,13 +515,10 @@ export class Game {
   private onTransportClosed(reason: string): void {
     if (this.disposed) return;
     if (this.transport.kind === 'practice') return;
-    if (this.welcomeReject) {
-      // A join is in flight (initial load or a reconnect attempt): fail it so the caller moves on immediately.
-      this.welcomeReject(new Error(`Disconnected: ${reason}`));
-      if (!this.running) return;
-      if (this.reconnecting) return;
-    }
-    if (/out of date|Version|Rate limit|too slow/i.test(reason)) {
+    // A join in flight (initial load or a reconnect attempt) fails immediately so the caller moves on.
+    if (this.welcomeReject) this.welcomeReject(new JoinError(`Disconnected: ${reason}`, false));
+    if (!this.running || this.reconnecting) return;
+    if (/out of date|Version|Rate limit|too slow|room_not_found|room_full/i.test(reason)) {
       this.opts.onLeave(`Disconnected: ${reason}`);
       return;
     }
@@ -497,6 +542,7 @@ export class Game {
     switch (e.e) {
       case 'shot': {
         if (e.id === this.local.id) return;
+        this.firedAt.set(e.id, performance.now());
         const r = this.remotes.get(e.id);
         const def = WEAPONS[e.w];
         const ox = e.o[0];
@@ -622,6 +668,12 @@ export class Game {
         break;
       case 'streak':
         break;
+      case 'host': {
+        const room = store.room;
+        if (room) useStore.setState({ room: { ...room, host: e.id } });
+        if (e.id === this.local.id && e.id >= 0) store.setToast('You are now the host. Press Esc to start the match.');
+        break;
+      }
     }
   }
 
@@ -629,7 +681,9 @@ export class Game {
     const store = useStore.getState();
     const prevPhase = this.match.phase;
     this.match = m;
-    this.local.live = m.phase === 'live';
+    // Players can move and shoot in a live match and during a private room's warmup.
+    this.local.live = m.phase === 'live' || m.phase === 'warmup';
+    this.applyRoomInfo(m);
     if (m.map !== this.map.id && this.running) {
       this.loadMapVisuals(getMap(m.map));
       audio.startAmbient(this.map.particles);
@@ -650,8 +704,14 @@ export class Game {
       audio.musicCadence();
       audio.stopMusic(1.2);
       this.input.releaseLock();
+    } else if (m.phase === 'warmup') {
+      if (prevPhase === 'ended') {
+        store.setResults(null);
+        store.setDeath(null);
+      }
+      if (audio.musicPlaying !== 'match') audio.startMusic('match');
     } else if (m.phase === 'countdown') {
-      if (prevPhase === 'ended' || prevPhase === 'waiting') {
+      if (prevPhase === 'ended' || prevPhase === 'waiting' || prevPhase === 'warmup') {
         store.setResults(null);
         store.setDeath(null);
       }
@@ -664,6 +724,21 @@ export class Game {
         setTimeout(() => useStore.getState().setCountdown(null), 900);
       }
     }
+  }
+
+  private applyRoomInfo(m: MatchInfo): void {
+    this.roomCode = m.code || '';
+    const cur = useStore.getState().room;
+    if (!m.code) {
+      if (cur) useStore.setState({ room: null });
+    } else if (!cur || cur.code !== m.code || cur.host !== m.host) {
+      useStore.setState({ room: { code: m.code, host: m.host } });
+    }
+  }
+
+  /** Host only: start the match from warmup, optionally on a chosen arena. */
+  startMatch(mapId?: string): void {
+    this.transport.send({ t: 'start', map: mapId });
   }
 
   private onAliveChanged(alive: boolean): void {
@@ -743,6 +818,11 @@ export class Game {
     const serverNow = this.clock.serverNow(now);
     const renderTime = serverNow - SIM.INTERP_DELAY_MS;
     for (const r of this.remotes.values()) r.update(renderTime, dt, now, this.rig.camera);
+    this.minimapTimer += dt;
+    if (this.minimapTimer >= 1 / 30) {
+      this.minimapTimer = 0;
+      this.drawMinimap(now, px, pz);
+    }
 
     // Effects
     this.tracers.update(dt);
@@ -803,6 +883,47 @@ export class Game {
       useStore.getState().prune(now);
     }
   };
+
+  /**
+   * Enemies appear on the minimap while you can see them, and for a moment
+   * after they fire, so it helps you read the fight without revealing hiders.
+   */
+  private drawMinimap(now: number, px: number, pz: number): void {
+    const mode = this.settings.minimap;
+    if (mode === 'off' || !minimap.ready) return;
+    const cam = this.rig.camera.position;
+    if (now - this.lastLos > 150) {
+      this.lastLos = now;
+      losFrom.x = cam.x;
+      losFrom.y = cam.y;
+      losFrom.z = cam.z;
+      for (const r of this.remotes.values()) {
+        if (!r.alive) continue;
+        losTo.x = r.pos.x;
+        losTo.y = r.pos.y + eyeHeight(r.crouch) * 0.8;
+        losTo.z = r.pos.z;
+        if (this.world.lineOfSight(losFrom, losTo)) this.seenUntil.set(r.info.id, now + 400);
+      }
+    }
+    let n = 0;
+    for (const r of this.remotes.values()) {
+      if (!r.alive || !r.model.group.visible) continue;
+      const id = r.info.id;
+      const seen = (this.seenUntil.get(id) ?? 0) > now;
+      const since = now - (this.firedAt.get(id) ?? -1e9);
+      const alpha = seen ? 1 : since < 2500 ? 1 - since / 2500 : 0;
+      if (alpha <= 0.02) continue;
+      let b = this.blips[n];
+      if (!b) this.blips[n] = b = { x: 0, z: 0, yaw: 0, color: 0, alpha: 0 };
+      b.x = r.pos.x;
+      b.z = r.pos.z;
+      b.yaw = r.yaw;
+      b.color = r.info.color;
+      b.alpha = alpha;
+      n++;
+    }
+    minimap.draw(mode, px, pz, this.rig.yaw, this.local.alive, this.blips, n);
+  }
 
   private updateCountdown(serverNow: number): void {
     if (this.match.phase !== 'countdown') return;

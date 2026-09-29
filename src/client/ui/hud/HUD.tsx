@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { WEAPONS, type WeaponId } from '@shared/weapons';
 import { COMBAT, MATCH } from '@shared/config';
 import { useStore } from '@client/app/store';
+import { minimap } from '@client/game/hud/Minimap';
 import { Crosshair } from './Crosshair';
 
 function weaponLabel(w: WeaponId | 'fall' | 'void'): string {
@@ -30,7 +31,7 @@ function Top() {
   const now = useNow(4);
   const serverNow = now + hud.serverOffset;
   const remain = hud.phaseEndsAt - serverNow;
-  const label = hud.phase === 'live' ? fmt(remain) : hud.phase === 'countdown' ? 'READY' : hud.phase === 'ended' ? 'END' : '--:--';
+  const label = hud.phase === 'live' ? fmt(remain) : hud.phase === 'countdown' ? 'READY' : hud.phase === 'ended' ? 'END' : hud.phase === 'warmup' ? 'WARMUP' : '--:--';
   return (
     <div className="hud-top" aria-label="Match status">
       <div className="stat">
@@ -184,6 +185,36 @@ function Death() {
   );
 }
 
+function MinimapView() {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const uiScale = useStore((s) => s.settings.uiScale);
+  useEffect(() => {
+    minimap.setCanvas(ref.current);
+    return () => minimap.setCanvas(null);
+  }, []);
+  const size = Math.round(172 * uiScale);
+  return <canvas ref={ref} className="minimap" style={{ width: size, height: size }} role="img" aria-label="Minimap" />;
+}
+
+/** Private room warmup: tell everyone what is happening and who starts the match. */
+function RoomBanner() {
+  const room = useStore((s) => s.room);
+  const phase = useStore((s) => s.hud.phase);
+  const myId = useStore((s) => s.myId);
+  const humans = useStore((s) => s.scoreboard.filter((r) => !r.bot).length);
+  if (!room || phase !== 'warmup') return null;
+  const isHost = room.host === myId;
+  return (
+    <div className="room-banner" role="status">
+      <b>WARMUP</b>
+      <span>
+        ROOM <em>{room.code}</em> · {humans} {humans === 1 ? 'PLAYER' : 'PLAYERS'}
+      </span>
+      <span className="hint-line">{isHost ? 'Press Esc to invite friends and start the match' : 'Kills do not count yet. Waiting for the host to start'}</span>
+    </div>
+  );
+}
+
 function Debug() {
   const show = useStore((s) => s.settings.showFps);
   const fps = useStore((s) => s.hud.fps);
@@ -191,7 +222,7 @@ function Debug() {
   const mode = useStore((s) => s.mode);
   if (!show) return null;
   return (
-    <div className="hud-corner-tl">
+    <div className="hud-fps">
       {fps} FPS · {mode === 'practice' ? 'LOCAL' : `${ping} MS`}
     </div>
   );
@@ -209,6 +240,7 @@ export function HUD({ onClickToPlay }: { onClickToPlay: () => void }) {
   const uiScale = useStore((s) => s.settings.uiScale);
   const reconnecting = useStore((s) => s.reconnecting);
   const connectStatus = useStore((s) => s.connectStatus);
+  const minimapMode = useStore((s) => s.settings.minimap);
   return (
     <div className="hud" style={{ '--ui-scale': uiScale } as React.CSSProperties}>
       {scoped && <div className="scope" />}
@@ -216,6 +248,8 @@ export function HUD({ onClickToPlay }: { onClickToPlay: () => void }) {
       {alive && !scoped && <Crosshair spread={spread} hit={hit} />}
       {alive && scoped && <Crosshair spread={0} hit={hit} />}
       <Top />
+      <RoomBanner />
+      {minimapMode !== 'off' && <MinimapView />}
       <Bars />
       <Ammo />
       <KillFeed />

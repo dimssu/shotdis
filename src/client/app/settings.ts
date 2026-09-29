@@ -28,6 +28,8 @@ export interface Settings {
   reducedMotion: boolean;
   damageNumbers: boolean;
   showFps: boolean;
+  /** Minimap: player-centred and rotating, whole arena, or hidden. */
+  minimap: 'rotate' | 'fixed' | 'off';
   uiScale: number;
   weapon: WeaponId;
   practiceBots: number;
@@ -50,6 +52,7 @@ export const DEFAULT_SETTINGS: Settings = {
   reducedMotion: false,
   damageNumbers: true,
   showFps: false,
+  minimap: 'rotate',
   uiScale: 1,
   weapon: 'rifle',
   practiceBots: 4,
