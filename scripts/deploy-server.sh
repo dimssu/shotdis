@@ -4,7 +4,7 @@
 set -euo pipefail
 PROJECT="${1:-${GCP_PROJECT:-gen-lang-client-0165222175}}"
 REGION="${2:-${GCP_REGION:-asia-south1}}"
-ORIGINS="${3:-${ALLOWED_ORIGINS:-https://shotdis.vercel.app}}"
+ORIGINS="${3:-${ALLOWED_ORIGINS:-https://shotdis.vercel.app,https://shotdis-*.vercel.app}}"
 SERVICE="shotdis-server"
 
 gcloud run deploy "$SERVICE" \
