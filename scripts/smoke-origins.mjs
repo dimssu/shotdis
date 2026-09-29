@@ -5,7 +5,7 @@ function test(origin) {
     const ws = new WebSocket(url, { headers: { origin } });
     const t = setTimeout(() => { ws.terminate(); resolve(`${origin}: timeout`); }, 10000);
     ws.on('open', () => {
-      ws.send(JSON.stringify({ t: 'join', name: 'Probe', weapon: 'rifle', v: 3 }));
+      ws.send(JSON.stringify({ t: 'join', name: 'Probe', weapon: 'rifle', v: 4 }));
     });
     ws.on('message', (d) => {
       const m = JSON.parse(d.toString());
