@@ -15,6 +15,9 @@ A fast, lightweight competitive browser FPS. No download, no accounts: open the 
 - 100 health + 50 armor on spawn; armor soaks 60 % of incoming damage while it lasts.
 - Score: 100 per kill, +25 headshot, streak bonuses at 3 / 5 / 7 / 10.
 - Bots fill empty slots so a room is never empty; **Practice** runs the whole match offline.
+- **Play with friends:** create a private room, share its 5-character code or invite link, warm up together, and the host starts the match on the arena they pick.
+- **Minimap** (top left): rotating or fixed. Enemies appear with a facing arrow while you can see them and fade out a moment after they fire, so it never reveals someone hiding.
+- Player models show a face, a pack on their back, and arms that follow their aim, so you can always tell where someone is looking.
 - Two arenas: **Warehouse** (compact industrial, catwalks, crates) and **Neon District** (rain-slick streets, alleys, rooftops).
 
 ## Controls
@@ -27,7 +30,7 @@ A fast, lightweight competitive browser FPS. No download, no accounts: open the 
 | Reload | R |
 | Weapons | 1, 2, Q, mouse wheel |
 | Scoreboard | Tab (hold) |
-| Pause | Esc |
+| Pause (host: start the match, copy invite) | Esc |
 
 ## Architecture
 
@@ -56,7 +59,9 @@ src/
 
 **Anti-cheat basics** (all server-side): input dt bounds, a real-time budget so clients cannot simulate faster than wall-clock, a hard horizontal speed cap in the shared movement code, fire rate / ammo / reload enforced by the shared weapon state machine, damage only from server raycasts, message validation and rate limiting, nickname sanitisation, origin allow-list, connection / room / per-IP caps.
 
-**Reconnects:** the welcome message carries a rejoin token. If the socket drops, the client reconnects automatically (up to four attempts) and reclaims the same player, score and position; the server keeps the slot for 20 s and terminates the stale socket, so no ghost bodies are left behind.
+**Private rooms:** `RoomManager` keeps private rooms apart from matchmaking, keyed by a 5-character code (no I, O, 0 or 1). A private room opens in a `warmup` phase where everyone can play but nothing is scored. Only the host may send `start` (optionally with an arena); the match then runs countdown → live → results and returns to warmup. When the host leaves, the longest-present player becomes host. Rooms close two minutes after the last player leaves. Invite links are `https://shotdis.vercel.app/?room=CODE`.
+
+**Reconnects:** the welcome message carries a rejoin token. If the socket drops, the client reconnects automatically (up to four attempts) and reclaims the same player, score and position; the server keeps the slot for 20 s and terminates the stale socket, so no ghost bodies are left behind. Leaving on purpose or closing the tab frees the slot immediately.
 
 **Rendering:** each arena is authored as boxes and ramps and merged into one mesh per material (≈20 draw calls per map). Procedural noise textures, a gradient sky dome, GPU point sparks, pooled tracers/casings, one shadow-casting sun. Quality presets scale shadows, antialiasing, particles and resolution.
 
@@ -106,7 +111,7 @@ During development `?debug=1` skips pointer lock and exposes `window.__game` / `
 
 ## Roadmap
 
-- Ranked / private rooms and parties (the room manager is already the seam).
+- Ranked play and parties that queue together (private rooms are the first step).
 - Team modes, more arenas, weapon skins.
 - Killcam and spectator camera while dead.
 - Optional touch controls.
