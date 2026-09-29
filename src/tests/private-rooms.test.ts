@@ -13,9 +13,9 @@ class Clock {
   now = () => this.t;
 }
 
-function setup(roomSize = 8) {
+function setup(roomSize = 8, maxPrivateRooms = 32) {
   const clock = new Clock();
-  const manager = new RoomManager({ roomSize, botFill: 4, idleTimeoutMs: 30_000, privateIdleTimeoutMs: 60_000, now: clock.now });
+  const manager = new RoomManager({ roomSize, botFill: 4, idleTimeoutMs: 30_000, privateIdleTimeoutMs: 60_000, soloPrivateIdleTimeoutMs: 10_000, maxPrivateRooms, now: clock.now });
   const inbox = new Map<number, ServerMsg[]>();
   const connect = (room: GameRoom, name: string) => {
     const p = room.addHuman(name, 'rifle');
@@ -163,5 +163,50 @@ describe('private rooms', () => {
     tick(61);
     expect(manager.getPrivateRoom(room.code)).toBeUndefined();
     expect(manager.rooms.has(room.id)).toBe(false);
+  });
+
+  it('can never crowd out public matchmaking, however many are created', () => {
+    const { manager } = setup(8, 3);
+    for (let i = 0; i < 3; i++) expect(manager.createPrivateRoom(6)).not.toBeNull();
+    expect(manager.createPrivateRoom(6)).toBeNull();
+    expect(manager.findRoom()).not.toBeNull();
+  });
+
+  it('close quickly when nobody but the creator ever joined, and drop their bots when empty', () => {
+    const { manager, connect, tick } = setup();
+    const solo = manager.createPrivateRoom(4)!;
+    const a = connect(solo, 'Alone');
+    expect(solo.botCount()).toBe(4);
+    manager.detach(solo, a.id);
+    expect(solo.botCount()).toBe(0);
+    tick(11);
+    expect(manager.getPrivateRoom(solo.code)).toBeUndefined();
+
+    const shared = manager.createPrivateRoom(0)!;
+    const b = connect(shared, 'B');
+    const c = connect(shared, 'C');
+    manager.detach(shared, b.id);
+    manager.detach(shared, c.id);
+    tick(11);
+    expect(manager.getPrivateRoom(shared.code)).toBe(shared); // friends were here: keep it for a regroup
+  });
+
+  it('never hands the host role to a player whose connection dropped while someone else is connected', () => {
+    const { manager, connect, clock } = setup();
+    const room = manager.createPrivateRoom(0)!;
+    const a = connect(room, 'A');
+    clock.t += 100;
+    const b = connect(room, 'B');
+    clock.t += 100;
+    const c = connect(room, 'C');
+    room.markDisconnected(b.id); // B's Wi-Fi drops; B stays in the room for the rejoin window
+    manager.detach(room, a.id); // the host closes the tab
+    expect(room.hostId).toBe(c.id);
+    // And a host whose own connection drops passes the role on straight away.
+    room.markDisconnected(c.id);
+    expect(room.hostId).toBe(c.id); // nobody connected left: keep it
+    room.rejoin(b.id);
+    room.markDisconnected(c.id);
+    expect(room.hostId).toBe(b.id);
   });
 });

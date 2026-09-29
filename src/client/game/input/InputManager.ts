@@ -175,7 +175,8 @@ export class InputManager {
       return;
     }
     if (e.code === 'Escape') {
-      // Browsers release pointer lock on Escape themselves; the lock change handler opens the menu.
+      // While locked the browser releases the pointer itself and the lock change opens the menu.
+      if (!this.locked) this.onMenu?.();
       return;
     }
     if (!this.locked) return;

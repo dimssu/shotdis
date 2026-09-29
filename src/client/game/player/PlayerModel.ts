@@ -108,10 +108,11 @@ export class PlayerModel {
 
     // Arms reach forward to the weapon; the whole rig pitches with the aim.
     this.aim.position.set(0, SHOULDER_Y, 0.02);
+    // 'YXZ': tilt the arm forward first, then turn it inward toward the weapon.
     const armL = box(armGeo, limbMat, -0.2, -0.07, 0.25);
-    armL.rotation.set(-1.35, 0.45, 0);
+    armL.rotation.set(-1.35, 0.45, 0, 'YXZ');
     const armR = box(armGeo, limbMat, 0.24, -0.07, 0.22);
-    armR.rotation.set(-1.3, -0.12, 0);
+    armR.rotation.set(-1.3, -0.12, 0, 'YXZ');
     this.gun = box(gunGeo, gunMat, 0.1, -0.1, 0.5);
     const muzzleTip = box(browGeo, this.accentMat, 0, 0.066, 0.3);
     this.gun.add(muzzleTip);

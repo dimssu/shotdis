@@ -127,11 +127,14 @@ export class Minimap {
     const cos = Math.cos(rot);
     const sin = Math.sin(rot);
 
+    const round = mode === 'rotate';
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, S, S);
     ctx.save();
     ctx.beginPath();
-    ctx.arc(half, half, half - dpr, 0, Math.PI * 2);
+    // Rotating view is a circle; the fixed view is square so the whole arena, corners included, fits.
+    if (round) ctx.arc(half, half, half - dpr, 0, Math.PI * 2);
+    else ctx.rect(0, 0, S, S);
     ctx.clip();
     ctx.fillStyle = 'rgba(7,9,14,0.82)';
     ctx.fillRect(0, 0, S, S);
@@ -157,7 +160,7 @@ export class Minimap {
       let py = (dx * sin + dz * cos) * scale;
       const d = Math.hypot(px, py);
       let edge = false;
-      if (d > rim) {
+      if (round && d > rim) {
         px = (px / d) * rim;
         py = (py / d) * rim;
         edge = true;
@@ -191,7 +194,8 @@ export class Minimap {
     ctx.strokeStyle = 'rgba(255,255,255,0.18)';
     ctx.lineWidth = dpr;
     ctx.beginPath();
-    ctx.arc(half, half, half - dpr, 0, Math.PI * 2);
+    if (round) ctx.arc(half, half, half - dpr, 0, Math.PI * 2);
+    else ctx.rect(dpr / 2, dpr / 2, S - dpr, S - dpr);
     ctx.stroke();
     if (mode === 'rotate') {
       const nx = half + sin * (half - 10 * dpr);

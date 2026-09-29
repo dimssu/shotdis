@@ -47,7 +47,7 @@ const losFrom = v3();
 const losTo = v3();
 
 /** A join the server refused (bad room code, full, outdated client). Retrying will not help. */
-class JoinError extends Error {
+export class JoinError extends Error {
   constructor(
     message: string,
     readonly fatal: boolean,
@@ -118,6 +118,9 @@ export class Game {
   private lastLos = 0;
   private minimapTimer = 0;
   private blips: Blip[] = [];
+  /** Set when the socket closed after the welcome but before loading finished. */
+  private closedDuringLoad: string | null = null;
+  private lockReleasedAt = 0;
   private rebuildTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(opts: GameOptions) {
@@ -143,11 +146,18 @@ export class Game {
     this.local = new LocalPlayer(this.world);
     this.input = new InputManager(opts.canvas);
     this.input.onLockChange = (locked) => {
+      if (!locked) this.lockReleasedAt = performance.now();
       const st = useStore.getState();
       useStore.setState({ pointerLocked: locked, paused: !locked && st.screen === 'game' && !st.results && !st.reconnecting });
       if (locked) useStore.setState({ overlay: 'none' });
     };
     this.input.onScoreboard = (open) => useStore.setState({ scoreboardOpen: open });
+    // Esc while the mouse is free (before clicking in, after a match) still opens the pause menu.
+    this.input.onMenu = () => {
+      const st = useStore.getState();
+      if (performance.now() - this.lockReleasedAt < 400) return; // the same Esc that released the mouse
+      if (st.screen === 'game' && !st.results && !st.reconnecting && !st.paused && st.overlay === 'none') useStore.setState({ paused: true });
+    };
     this.scene.add(this.tracers.object, this.sparks.object, this.casings.mesh, this.remoteFlash.light, this.localFlash.light);
     this.unsubscribe = useStore.subscribe((state, prev) => {
       if (state.settings !== prev.settings) this.onSettingsChanged(state.settings, prev.settings);
@@ -197,6 +207,7 @@ export class Game {
     this.running = true;
     this.lastFrame = performance.now();
     this.raf = requestAnimationFrame(this.frame);
+    if (this.closedDuringLoad) void this.reconnect(this.closedDuringLoad);
   }
 
   private waitForWelcome(): Promise<void> {
@@ -430,7 +441,7 @@ export class Game {
         this.onScores(m.p);
         break;
       case 'err': {
-        const fatal = m.code === 'version' || m.code === 'room_not_found' || m.code === 'room_full' || m.code === 'full';
+        const fatal = m.code === 'version' || m.code === 'room_not_found' || m.code === 'room_full' || m.code === 'full' || m.code === 'rate_limited';
         if (this.welcomeReject) {
           // The join was refused: surface the server's explanation on the loading screen.
           this.welcomeReject(new JoinError(m.msg, fatal));
@@ -516,8 +527,16 @@ export class Game {
     if (this.disposed) return;
     if (this.transport.kind === 'practice') return;
     // A join in flight (initial load or a reconnect attempt) fails immediately so the caller moves on.
-    if (this.welcomeReject) this.welcomeReject(new JoinError(`Disconnected: ${reason}`, false));
-    if (!this.running || this.reconnecting) return;
+    if (this.welcomeReject) {
+      this.welcomeReject(new JoinError(`Disconnected: ${reason}`, false));
+      return;
+    }
+    if (this.reconnecting) return;
+    if (!this.running) {
+      // Welcomed but still building the arena: reconnect once loading finishes.
+      if (this.welcomed) this.closedDuringLoad = reason;
+      return;
+    }
     if (/out of date|Version|Rate limit|too slow|room_not_found|room_full/i.test(reason)) {
       this.opts.onLeave(`Disconnected: ${reason}`);
       return;
@@ -644,6 +663,9 @@ export class Game {
         } else {
           const r = this.remotes.get(e.id);
           if (r) r.teleport(e.x, e.y, e.z, e.yaw);
+          // A fresh spawn must not inherit minimap visibility from the previous life.
+          this.firedAt.delete(e.id);
+          this.seenUntil.delete(e.id);
         }
         break;
       }
@@ -911,7 +933,7 @@ export class Game {
       const id = r.info.id;
       const seen = (this.seenUntil.get(id) ?? 0) > now;
       const since = now - (this.firedAt.get(id) ?? -1e9);
-      const alpha = seen ? 1 : since < 2500 ? 1 - since / 2500 : 0;
+      const alpha = seen ? 1 : Math.min(1, Math.max(0, 1 - Math.max(0, since) / 2500));
       if (alpha <= 0.02) continue;
       let b = this.blips[n];
       if (!b) this.blips[n] = b = { x: 0, z: 0, yaw: 0, color: 0, alpha: 0 };

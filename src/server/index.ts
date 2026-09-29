@@ -20,6 +20,11 @@ const MAX_BUFFERED_BYTES = 512 * 1024;
 const MAX_SESSIONS = clampInt(process.env.MAX_SESSIONS, 400, 8, 5000);
 const MAX_ROOMS = clampInt(process.env.MAX_ROOMS, 48, 1, 500);
 const MAX_PER_IP = clampInt(process.env.MAX_PER_IP, 6, 1, 100);
+const MAX_PRIVATE_ROOMS = clampInt(process.env.MAX_PRIVATE_ROOMS, 32, 1, 500);
+/** Private rooms one address may create per minute. */
+const CREATES_PER_MIN = 4;
+/** Wrong room codes one address may try per 10 minutes before lookups are refused. */
+const MISSES_PER_10_MIN = 12;
 const TRUST_PROXY = process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true';
 /** How long a dropped player keeps their slot for a reconnect. */
 const REJOIN_GRACE_MS = 20_000;
@@ -40,7 +45,43 @@ function clampInt(v: string | undefined, def: number, lo: number, hi: number): n
   return Math.max(lo, Math.min(hi, Math.floor(n)));
 }
 
-const manager = new RoomManager({ roomSize: ROOM_SIZE, botFill: BOT_FILL, idleTimeoutMs: 30_000, maxRooms: MAX_ROOMS, now: () => performance.now() });
+const manager = new RoomManager({
+  roomSize: ROOM_SIZE,
+  botFill: BOT_FILL,
+  idleTimeoutMs: 30_000,
+  maxRooms: MAX_ROOMS,
+  maxPrivateRooms: MAX_PRIVATE_ROOMS,
+  now: () => performance.now(),
+});
+
+/** Sliding-window counter per address (room creation and failed code lookups). */
+class RateWindow {
+  private hits = new Map<string, number[]>();
+  constructor(
+    private windowMs: number,
+    private limit: number,
+  ) {}
+  /** Record a hit; returns false when the address is over its limit. */
+  allow(key: string, now = Date.now()): boolean {
+    const list = (this.hits.get(key) ?? []).filter((t) => now - t < this.windowMs);
+    if (list.length >= this.limit) {
+      this.hits.set(key, list);
+      return false;
+    }
+    list.push(now);
+    this.hits.set(key, list);
+    return true;
+  }
+  blocked(key: string, now = Date.now()): boolean {
+    const list = (this.hits.get(key) ?? []).filter((t) => now - t < this.windowMs);
+    return list.length >= this.limit;
+  }
+  prune(now = Date.now()): void {
+    for (const [k, list] of this.hits) if (list.every((t) => now - t >= this.windowMs)) this.hits.delete(k);
+  }
+}
+const createLimiter = new RateWindow(60_000, CREATES_PER_MIN);
+const missLimiter = new RateWindow(600_000, MISSES_PER_10_MIN);
 manager.start();
 
 /** Rejoin tokens handed out in welcome messages, so a client that drops can reclaim its player. */
@@ -58,7 +99,9 @@ const http = createServer((req, res) => {
   const url = req.url ?? '/';
   if (url === '/health' || url === '/healthz') {
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', 'access-control-allow-origin': '*' });
-    res.end(JSON.stringify({ ok: true, ...manager.stats(), uptime: Math.round(process.uptime()) }));
+    const st = manager.stats();
+    // Private room counts stay internal: they would help someone guess codes.
+    res.end(JSON.stringify({ ok: true, rooms: st.rooms - st.privateRooms, players: st.players, bots: st.bots, uptime: Math.round(process.uptime()) }));
     return;
   }
   res.writeHead(200, { 'content-type': 'text/plain' });
@@ -90,9 +133,11 @@ interface Session {
 
 function clientIp(req: import('node:http').IncomingMessage): string {
   if (TRUST_PROXY) {
+    // The trusted proxy appends the address it saw; anything before that came from the client and can be forged.
     const fwd = req.headers['x-forwarded-for'];
-    const first = (Array.isArray(fwd) ? fwd[0] : fwd)?.split(',')[0]?.trim();
-    if (first) return first;
+    const parts = (Array.isArray(fwd) ? fwd.join(',') : fwd ?? '').split(',').map((p) => p.trim()).filter(Boolean);
+    const last = parts[parts.length - 1];
+    if (last) return last;
   }
   return req.socket.remoteAddress ?? 'unknown';
 }
@@ -199,10 +244,19 @@ wss.on('connection', (ws, req) => {
       const name = sanitizeName(msg.name) || randomName();
       let room: GameRoom | null | undefined;
       if (msg.room && 'create' in msg.room) {
+        if (!createLimiter.allow(ip)) {
+          reject(session, 'rate_limited', 'You created several rooms in a row. Wait a minute and try again.');
+          return;
+        }
         room = manager.createPrivateRoom(msg.room.bots);
       } else if (msg.room && 'code' in msg.room) {
+        if (missLimiter.blocked(ip)) {
+          reject(session, 'rate_limited', 'Too many wrong room codes. Wait a few minutes and try again.');
+          return;
+        }
         room = manager.getPrivateRoom(msg.room.code);
         if (!room) {
+          missLimiter.allow(ip);
           reject(session, 'room_not_found', `Room ${msg.room.code} doesn't exist or has already closed. Check the code with your friend.`);
           return;
         }
@@ -268,6 +322,8 @@ wss.on('connection', (ws, req) => {
 
 // Heartbeat: ping every 5s, drop sockets that did not answer the previous ping.
 const pingTimer = setInterval(() => {
+  createLimiter.prune();
+  missLimiter.prune();
   for (const [ws, s] of sessions) {
     if (!s.alive) {
       ws.terminate();

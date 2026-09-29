@@ -46,6 +46,8 @@ export class GameRoom implements BotWorldView {
   readonly code: string;
   /** Player id allowed to start matches in a private room (-1 when nobody is there). */
   hostId = -1;
+  /** Most humans ever in the room at once; a private room nobody else joined is closed quickly. */
+  peakHumans = 0;
   private botMode: 'fill' | 'fixed';
   readonly players = new Map<number, SimPlayer>();
   private brains = new Map<number, BotBrain>();
@@ -183,6 +185,7 @@ export class GameRoom implements BotWorldView {
     this.players.set(id, p);
     this.adsHeld.set(id, false);
     if (this.isPrivate && this.hostId === -1) this.hostId = id;
+    this.peakHumans = Math.max(this.peakHumans, this.humanCount());
     if (this.phase === 'waiting') this.setPhase('countdown'); // spawns everyone, including this player
     else if (this.inArena) this.spawn(p);
     this.broadcast({ e: 'join', p: p.info() }, id);
@@ -229,7 +232,17 @@ export class GameRoom implements BotWorldView {
   /** Mark a player as disconnected (the socket dropped); they are removed by the host when it gives up on them. */
   markDisconnected(id: number): void {
     const p = this.players.get(id);
-    if (p) p.connected = false;
+    if (!p) return;
+    p.connected = false;
+    // A host with a dropped connection cannot start the match; pass the role on if anyone else is here.
+    if (id === this.hostId) {
+      for (const q of this.players.values()) {
+        if (!q.bot && q.connected) {
+          this.assignHost();
+          break;
+        }
+      }
+    }
   }
 
   addBot(difficulty?: BotDifficulty): SimPlayer {
@@ -267,10 +280,16 @@ export class GameRoom implements BotWorldView {
     }
   }
 
-  /** Hand the host role to the longest-present human (or nobody). */
+  /**
+   * Hand the host role to the longest-present connected human. A player whose
+   * connection dropped (still in their rejoin window) only gets it if nobody else is left.
+   */
   private assignHost(): void {
     let next: SimPlayer | null = null;
-    for (const q of this.players.values()) if (!q.bot && (!next || q.joinedAt < next.joinedAt)) next = q;
+    for (const q of this.players.values()) {
+      if (q.bot) continue;
+      if (!next || (q.connected && !next.connected) || (q.connected === next.connected && q.joinedAt < next.joinedAt)) next = q;
+    }
     this.hostId = next ? next.id : -1;
     this.broadcast({ e: 'host', id: this.hostId });
   }
@@ -278,7 +297,9 @@ export class GameRoom implements BotWorldView {
   private ensureBots(): void {
     const humans = this.humanCount();
     const cap = Math.max(0, this.roomSize - humans);
-    const desired = this.botMode === 'fixed' ? clamp(this.botFill, 0, cap) : clamp(this.botFill - Math.max(0, humans - 1), 0, cap);
+    // An empty private room does not need to keep simulating its bots.
+    const desired =
+      this.botMode === 'fixed' ? (humans === 0 ? 0 : clamp(this.botFill, 0, cap)) : clamp(this.botFill - Math.max(0, humans - 1), 0, cap);
     let bots = this.botCount();
     while (bots < desired) {
       this.addBot();

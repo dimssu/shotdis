@@ -16,7 +16,12 @@ export interface RoomManagerOptions {
   idleTimeoutMs: number;
   /** Private rooms survive a little longer without players, so a group can regroup. */
   privateIdleTimeoutMs?: number;
+  /** A private room that only its creator ever joined is closed this soon after they leave. */
+  soloPrivateIdleTimeoutMs?: number;
+  /** Cap on public rooms. */
   maxRooms?: number;
+  /** Separate cap on private rooms, so they can never crowd out public matchmaking. */
+  maxPrivateRooms?: number;
   now: () => number;
 }
 
@@ -48,7 +53,11 @@ export class RoomManager {
     const now = this.opts.now();
     for (const [id, room] of this.rooms) {
       room.update(now);
-      const limit = room.isPrivate ? (this.opts.privateIdleTimeoutMs ?? 120_000) : this.opts.idleTimeoutMs;
+      const limit = !room.isPrivate
+        ? this.opts.idleTimeoutMs
+        : room.peakHumans <= 1
+          ? (this.opts.soloPrivateIdleTimeoutMs ?? 15_000)
+          : (this.opts.privateIdleTimeoutMs ?? 120_000);
       if (room.humanCount() === 0 && room.idleMs() > limit) {
         this.rooms.delete(id);
         this.links.delete(id);
@@ -65,13 +74,13 @@ export class RoomManager {
       if (!best || room.humanCount() > best.humanCount()) best = room;
     }
     if (best) return best;
-    if (this.rooms.size >= (this.opts.maxRooms ?? 48)) return null;
+    if (this.rooms.size - this.codes.size >= (this.opts.maxRooms ?? 48)) return null;
     return this.createRoom();
   }
 
   /** Create a private room with its own join code. Returns null when the room cap is reached. */
   createPrivateRoom(bots: number): GameRoom | null {
-    if (this.rooms.size >= (this.opts.maxRooms ?? 48)) return null;
+    if (this.codes.size >= (this.opts.maxPrivateRooms ?? 32)) return null;
     let code = '';
     for (let i = 0; i < 20 && !code; i++) {
       const c = generateRoomCode(randomInt);

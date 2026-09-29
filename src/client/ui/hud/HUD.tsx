@@ -188,12 +188,13 @@ function Death() {
 function MinimapView() {
   const ref = useRef<HTMLCanvasElement>(null);
   const uiScale = useStore((s) => s.settings.uiScale);
+  const mode = useStore((s) => s.settings.minimap);
   useEffect(() => {
     minimap.setCanvas(ref.current);
     return () => minimap.setCanvas(null);
   }, []);
   const size = Math.round(172 * uiScale);
-  return <canvas ref={ref} className="minimap" style={{ width: size, height: size }} role="img" aria-label="Minimap" />;
+  return <canvas ref={ref} className={`minimap ${mode === 'fixed' ? 'square' : ''}`} style={{ width: size, height: size }} role="img" aria-label="Minimap" />;
 }
 
 /** Private room warmup: tell everyone what is happening and who starts the match. */
@@ -210,7 +211,7 @@ function RoomBanner() {
       <span>
         ROOM <em>{room.code}</em> · {humans} {humans === 1 ? 'PLAYER' : 'PLAYERS'}
       </span>
-      <span className="hint-line">{isHost ? 'Press Esc to invite friends and start the match' : 'Kills do not count yet. Waiting for the host to start'}</span>
+      <span className="hint-line">{isHost ? 'Press Esc to invite friends and start the match' : 'Kills do not count yet. The host starts the match'}</span>
     </div>
   );
 }

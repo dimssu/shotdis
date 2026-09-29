@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MAPS } from '@shared/maps';
 import type { JoinRoom } from '@shared/protocol';
-import { Game } from '@client/game/Game';
+import { Game, JoinError } from '@client/game/Game';
 import { LoopbackTransport, WsTransport, type Transport } from '@client/game/net/Transport';
 import { audio } from '@client/game/audio/AudioManager';
 import { HUD } from '@client/ui/hud/HUD';
@@ -74,14 +74,18 @@ function GameView({ onLeave }: { onLeave: (reason?: string) => void }) {
     }
     gameRef.current = game;
     let cancelled = false;
+    const inviteUsed = room && 'code' in room && useStore.getState().inviteCode === room.code;
     game
       .start()
       .then(() => {
         if (cancelled) return;
+        // The invite has done its job only once we are actually in the room.
+        if (inviteUsed) useStore.getState().clearInvite();
         useStore.getState().setScreen('game');
       })
       .catch((e: unknown) => {
         if (cancelled) return;
+        if (inviteUsed && e instanceof JoinError && e.fatal) useStore.getState().clearInvite();
         setFailed(e instanceof Error ? e.message : 'Failed to load the arena');
       });
     return () => {
@@ -177,7 +181,6 @@ export function App() {
     st.setMode(mode);
     audio.init();
     audio.stopMusic(0.5);
-    if (room && 'code' in room && st.inviteCode === room.code) st.clearInvite();
     if (mode === 'online') {
       st.setScreen('connecting');
       const status = !room ? 'Reaching the game server' : 'create' in room ? 'Creating your private room' : `Joining room ${room.code}`;

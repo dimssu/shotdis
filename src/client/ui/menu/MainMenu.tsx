@@ -88,7 +88,7 @@ export function MainMenu({ onJoinRoom }: { onJoinRoom: (code: string) => void })
               <span className="label">You are invited</span>
               <b>ROOM {inviteCode}</b>
               <div className="row">
-                <Button className="primary" onClick={joinInvite} disabled={!SERVER_URL} autoFocus>
+                <Button className="primary" onClick={joinInvite} disabled={!SERVER_URL || serverInfo?.ok === false} autoFocus>
                   Join room
                 </Button>
                 <Button className="ghost small" onClick={clearInvite}>
